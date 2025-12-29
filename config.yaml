@@ -56,6 +56,12 @@ ui_state:
   last_seed: 3000
   last_chunk_size: 240
   last_split_text_enabled: true
+  last_split_strategy: basic
+  last_smart_target_seconds: 15.0
+  last_smart_min_seconds: 10.0
+  last_smart_max_seconds: 18.0
+  last_smart_base_wps: 2.7
+  last_smart_overlap_sentences: 0
   hide_chunk_warning: false
   hide_generation_warning: false
   theme: light

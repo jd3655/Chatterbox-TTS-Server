@@ -92,6 +92,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "last_seed": 0,  # Last used generation seed.
         "last_chunk_size": 120,  # Last used chunk size for text splitting in UI.
         "last_split_text_enabled": True,  # Whether text splitting was last enabled in UI.
+        "last_split_strategy": "basic",  # Last used split strategy.
+        "last_smart_target_seconds": 15.0,  # Last used target seconds for intelligent split.
+        "last_smart_min_seconds": 10.0,  # Last used min seconds for intelligent split.
+        "last_smart_max_seconds": 18.0,  # Last used max seconds for intelligent split.
+        "last_smart_base_wps": 2.7,  # Last used base words/sec for intelligent split.
+        "last_smart_overlap_sentences": 0,  # Last used overlap sentences count.
         "hide_chunk_warning": False,  # Flag to hide the chunking warning modal.
         "hide_generation_warning": False,  # Flag to hide the general generation quality notice modal.
         "theme": "dark",  # Default UI theme ('dark' or 'light').

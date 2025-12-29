@@ -208,6 +208,71 @@ POTENTIAL_END_PATTERN = re.compile(r'([.!?])(["\']?)(\s+|$)')
 BULLET_POINT_PATTERN = re.compile(r"(?:^|\n)\s*([-•*]|\d+\.)\s+")
 # Placeholder for non-verbal cues or special instructions within text (e.g., (laughs), (sighs)).
 NON_VERBAL_CUE_PATTERN = re.compile(r"(\([\w\s'-]+\))")
+BRACKET_TAG_PATTERN = re.compile(r"\[[^\[\]]+\]")
+SOFT_BOUNDARY_PATTERN = re.compile(r"[;:—–—]")
+WEAK_END_WORDS = {
+    "a",
+    "an",
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "and",
+    "or",
+    "but",
+    "so",
+    "yet",
+    "nor",
+    "of",
+    "to",
+    "in",
+    "on",
+    "at",
+    "by",
+    "with",
+    "for",
+    "from",
+    "as",
+    "into",
+    "onto",
+    "over",
+    "under",
+    "about",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "am",
+    "it",
+    "its",
+    "they",
+    "their",
+    "them",
+    "we",
+    "our",
+    "us",
+    "i",
+    "my",
+    "me",
+    "you",
+    "your",
+}
+WEAK_START_WORDS = {
+    "and",
+    "but",
+    "so",
+    "or",
+    "because",
+    "however",
+    "therefore",
+    "though",
+    "then",
+    "also",
+}
 
 
 # --- Audio Processing Utilities ---
@@ -1088,6 +1153,290 @@ def chunk_text_by_sentences(
 
     logger.info(f"Text chunking complete. Generated {len(text_chunks)} chunk(s).")
     return text_chunks
+
+
+def _get_tag_spans(text: str) -> List[Tuple[int, int]]:
+    return [match.span() for match in BRACKET_TAG_PATTERN.finditer(text)]
+
+
+def _is_inside_spans(index: int, spans: List[Tuple[int, int]]) -> bool:
+    return any(start <= index < end for start, end in spans)
+
+
+def _split_sentence_with_soft_boundaries(sentence: str) -> List[str]:
+    spans = _get_tag_spans(sentence)
+    pieces: List[str] = []
+    last_idx = 0
+    for match in SOFT_BOUNDARY_PATTERN.finditer(sentence):
+        if _is_inside_spans(match.start(), spans):
+            continue
+        segment = sentence[last_idx : match.end()].strip()
+        if segment:
+            pieces.append(segment)
+        last_idx = match.end()
+    tail = sentence[last_idx:].strip()
+    if tail:
+        pieces.append(tail)
+    return pieces if pieces else [sentence.strip()]
+
+
+def _determine_boundary_type(text: str) -> str:
+    stripped = text.rstrip()
+    if not stripped:
+        return "none"
+    last_char = stripped[-1]
+    if last_char in [".", "!", "?"]:
+        return "strong"
+    if last_char in [";", ":", "—", "–", "-"]:
+        return "soft"
+    return "none"
+
+
+def _count_words(text: str) -> int:
+    return len(re.findall(r"\b[\w']+\b", text))
+
+
+def _join_segments(segments: List[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for idx, segment in enumerate(segments):
+        if segment["text"]:
+            parts.append(segment["text"])
+        if idx < len(segments) - 1 and segment.get("paragraph_break"):
+            parts.append("\n\n")
+    combined = " ".join(parts)
+    combined = re.sub(r"\s+\n\n\s+", "\n\n", combined)
+    return combined.strip()
+
+
+def _get_first_word(text: str) -> str:
+    match = re.search(r"\b[\w']+\b", text)
+    return match.group(0).lower() if match else ""
+
+
+def _get_last_word(text: str) -> str:
+    matches = re.findall(r"\b[\w']+\b", text)
+    return matches[-1].lower() if matches else ""
+
+
+def _score_boundary(
+    segments: List[Dict[str, Any]], index: int, target_words: float, max_words: int
+) -> Tuple[float, int]:
+    left_segments = segments[:index]
+    right_segments = segments[index:]
+    left_text = _join_segments(left_segments)
+    right_text = _join_segments(right_segments)
+    if not left_text:
+        return (-float("inf"), 0)
+
+    words_left = _count_words(left_text)
+    score = 0.0
+
+    boundary_segment = segments[index - 1]
+    if boundary_segment.get("paragraph_break"):
+        score += 3.0
+
+    boundary_type = boundary_segment.get("boundary", "none")
+    if boundary_type == "strong":
+        score += 2.0
+    elif boundary_type == "soft":
+        score += 1.0
+
+    end_word = _get_last_word(left_text)
+    if end_word in WEAK_END_WORDS:
+        score -= 2.0
+
+    start_word = _get_first_word(right_text)
+    if start_word in WEAK_START_WORDS:
+        score -= 1.5
+
+    if max_words > 0 and words_left > max_words:
+        score -= (words_left - max_words) * 0.5
+
+    score -= abs(words_left - target_words) * 0.02
+    return score, words_left
+
+
+def _adjust_boundary_for_tags(
+    segments: List[Dict[str, Any]], boundary_index: int
+) -> Tuple[int, str]:
+    """Ensure we never split inside bracket tags like [laugh]."""
+    chunk_text = _join_segments(segments[:boundary_index])
+    if re.search(r"\[[^\]]*$", chunk_text):
+        for new_idx in range(boundary_index, len(segments)):
+            candidate_text = _join_segments(segments[: new_idx + 1])
+            if not re.search(r"\[[^\]]*$", candidate_text):
+                return new_idx + 1, candidate_text
+    return boundary_index, chunk_text
+
+
+def smart_split_text(
+    text: str,
+    target_seconds: float = 15.0,
+    min_seconds: float = 10.0,
+    max_seconds: float = 18.0,
+    base_words_per_second: float = 2.7,
+    speed_factor: float = 1.0,
+    overlap_sentences: int = 0,
+) -> List[str]:
+    """
+    Splits text using word-aware heuristics aimed at producing evenly timed chunks.
+    """
+    if not text or text.isspace():
+        return []
+
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        return []
+
+    words_per_second = max(base_words_per_second * speed_factor, 0.1)
+    min_words = int(min_seconds * words_per_second)
+    max_words = int(max_seconds * words_per_second)
+    target_words = int(
+        min(max(target_seconds * words_per_second, min_words), max_words)
+    )
+
+    paragraphs = [p for p in re.split(r"\n\s*\n+", normalized) if p.strip()]
+    segments: List[Dict[str, Any]] = []
+
+    for para_idx, paragraph in enumerate(paragraphs):
+        sentences = split_into_sentences(paragraph.strip()) or [paragraph.strip()]
+        for sentence in sentences:
+            for piece in _split_sentence_with_soft_boundaries(sentence):
+                segments.append(
+                    {
+                        "text": piece.strip(),
+                        "boundary": _determine_boundary_type(piece),
+                        "paragraph_break": False,
+                    }
+                )
+        if segments and para_idx < len(paragraphs) - 1:
+            segments[-1]["paragraph_break"] = True
+
+    if not segments:
+        return [normalized]
+
+    chunks: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    candidate_indices: List[int] = []
+    idx = 0
+
+    while idx < len(segments):
+        current.append(segments[idx])
+        candidate_indices.append(len(current))
+        idx += 1
+
+        chunk_words = _count_words(_join_segments(current))
+        remaining_segments = len(segments) - idx
+
+        should_split = False
+        boundary_reason = ""
+
+        if current[-1].get("paragraph_break") and chunk_words >= min_words:
+            should_split = True
+            boundary_reason = "paragraph"
+        elif chunk_words >= max_words:
+            should_split = True
+            boundary_reason = "max"
+        elif chunk_words >= target_words and remaining_segments > 0:
+            should_split = True
+            boundary_reason = "target"
+
+        if should_split and candidate_indices:
+            boundary_choices = candidate_indices[-6:]
+            scored = []
+            for candidate in boundary_choices:
+                score, words_at_boundary = _score_boundary(
+                    current, candidate, target_words, max_words
+                )
+                scored.append(
+                    (
+                        score,
+                        -abs(words_at_boundary - target_words),
+                        candidate,
+                    )
+                )
+
+            scored.sort(reverse=True)
+            chosen_index = scored[0][2] if scored else len(current)
+            chosen_index = max(1, min(chosen_index, len(current)))
+
+            chosen_boundary_text = _join_segments(current[:chosen_index])
+            chosen_end_word = _get_last_word(chosen_boundary_text)
+            chosen_start_word = _get_first_word(_join_segments(current[chosen_index:]))
+            remaining_words = _count_words(
+                _join_segments(current[chosen_index:] + segments[idx:])
+            )
+            if (
+                boundary_reason == "target"
+                and chosen_end_word in WEAK_END_WORDS
+                and chunk_words < max_words
+                and remaining_segments > 0
+            ):
+                continue
+            if (
+                boundary_reason == "target"
+                and chosen_start_word in WEAK_START_WORDS
+                and chunk_words < max_words
+                and remaining_segments > 0
+            ):
+                continue
+            if (
+                boundary_reason == "target"
+                and remaining_words < min_words
+                and chunk_words < max_words
+            ):
+                continue
+            if (
+                remaining_words < min_words
+                and chunk_words < max_words + min_words
+                and remaining_segments > 0
+            ):
+                continue
+
+            chosen_index, chunk_text = _adjust_boundary_for_tags(
+                current, chosen_index
+            )
+            chunk_segments = current[:chosen_index]
+            chunks.append(chunk_segments)
+
+            current = current[chosen_index:]
+            candidate_indices = list(range(1, len(current) + 1))
+            if boundary_reason == "paragraph":
+                candidate_indices = []
+
+    if current:
+        chunks.append(current)
+
+    if len(chunks) > 1:
+        trailing_words = _count_words(_join_segments(chunks[-1]))
+        if trailing_words < min_words:
+            penultimate = chunks[-2]
+            last_chunk = chunks[-1]
+            while (
+                trailing_words < min_words
+                and penultimate
+                and _count_words(_join_segments(penultimate)) > min_words
+            ):
+                moved_segment = penultimate.pop()
+                last_chunk.insert(0, moved_segment)
+                trailing_words = _count_words(_join_segments(last_chunk))
+            if trailing_words < min_words:
+                penultimate.extend(last_chunk)
+                chunks.pop()
+
+    final_chunks: List[str] = []
+    previous_chunk_segments: List[Dict[str, Any]] = []
+
+    for chunk_segments in chunks:
+        chunk_text = _join_segments(chunk_segments)
+        if overlap_sentences > 0 and previous_chunk_segments:
+            overlap = previous_chunk_segments[-overlap_sentences:]
+            chunk_text = _join_segments(overlap + chunk_segments)
+        final_chunks.append(chunk_text)
+        previous_chunk_segments = chunk_segments
+
+    logger.info(f"Smart split produced {len(final_chunks)} chunk(s).")
+    return final_chunks
 
 
 # --- File System Utilities ---

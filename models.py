@@ -75,6 +75,35 @@ class CustomTTSRequest(BaseModel):
         le=500,  # Maximum reasonable chunk size
         description="Approximate target character length for text chunks when splitting is enabled (50-500).",
     )
+    split_strategy: Optional[Literal["off", "basic", "intelligent"]] = Field(
+        None,
+        description="Splitting approach when split_text is true. 'basic' keeps sentence boundaries, 'intelligent' is word-aware, 'off' disables splitting.",
+    )
+    smart_target_seconds: Optional[float] = Field(
+        15.0,
+        ge=1.0,
+        description="Target duration per chunk (seconds) for intelligent splitting.",
+    )
+    smart_min_seconds: Optional[float] = Field(
+        10.0,
+        ge=1.0,
+        description="Minimum duration per chunk (seconds) for intelligent splitting.",
+    )
+    smart_max_seconds: Optional[float] = Field(
+        18.0,
+        ge=1.0,
+        description="Maximum duration per chunk (seconds) for intelligent splitting.",
+    )
+    smart_base_wps: Optional[float] = Field(
+        2.7,
+        ge=0.1,
+        description="Base words per second estimate for intelligent splitting.",
+    )
+    smart_overlap_sentences: Optional[int] = Field(
+        0,
+        ge=0,
+        description="Number of prior sentences to prepend to the next chunk for overlap when using intelligent splitting.",
+    )
 
     # Embed generation parameters directly
     temperature: Optional[float] = Field(
