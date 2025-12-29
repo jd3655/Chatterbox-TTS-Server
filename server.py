@@ -897,7 +897,44 @@ async def custom_tts_endpoint(
         None  # SR from the TTS engine (e.g., 24000 Hz)
     )
 
-    if request.split_text and len(request.text) > (
+    effective_split_strategy = (
+        request.split_strategy if request.split_strategy else "basic"
+    )
+
+    if not request.split_text or effective_split_strategy == "off":
+        text_chunks = [request.text]
+        logger.info("Processing text as a single chunk (splitting disabled).")
+    elif effective_split_strategy == "intelligent":
+        speed_factor = (
+            request.speed_factor
+            if request.speed_factor is not None
+            else get_gen_default_speed_factor()
+        )
+        text_chunks = utils.smart_split_text(
+            request.text,
+            target_seconds=(
+                request.smart_target_seconds
+                if request.smart_target_seconds is not None
+                else 15.0
+            ),
+            min_seconds=(
+                request.smart_min_seconds if request.smart_min_seconds is not None else 10.0
+            ),
+            max_seconds=(
+                request.smart_max_seconds if request.smart_max_seconds is not None else 18.0
+            ),
+            base_words_per_second=(
+                request.smart_base_wps if request.smart_base_wps is not None else 2.7
+            ),
+            speed_factor=speed_factor,
+            overlap_sentences=(
+                request.smart_overlap_sentences
+                if request.smart_overlap_sentences is not None
+                else 0
+            ),
+        )
+        perf_monitor.record(f"Text smart-split into {len(text_chunks)} chunks")
+    elif len(request.text) > (
         request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5
     ):
         chunk_size_to_use = (

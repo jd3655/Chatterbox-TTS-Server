@@ -44,11 +44,17 @@ document.addEventListener('DOMContentLoaded', async function () {
     const textArea = document.getElementById('text');
     const charCount = document.getElementById('char-count');
     const generateBtn = document.getElementById('generate-btn');
-    const splitTextToggle = document.getElementById('split-text-toggle');
+    const splitStrategySelect = document.getElementById('split-strategy-select');
     const chunkSizeControls = document.getElementById('chunk-size-controls');
     const chunkSizeSlider = document.getElementById('chunk-size-slider');
     const chunkSizeValue = document.getElementById('chunk-size-value');
     const chunkExplanation = document.getElementById('chunk-explanation');
+    const intelligentControls = document.getElementById('intelligent-controls');
+    const smartTargetInput = document.getElementById('smart-target-seconds');
+    const smartMinInput = document.getElementById('smart-min-seconds');
+    const smartMaxInput = document.getElementById('smart-max-seconds');
+    const smartBaseWpsInput = document.getElementById('smart-base-wps');
+    const smartOverlapInput = document.getElementById('smart-overlap-sentences');
     const voiceModeRadios = document.querySelectorAll('input[name="voice_mode"]');
     const predefinedVoiceOptionsDiv = document.getElementById('predefined-voice-options');
     const predefinedVoiceSelect = document.getElementById('predefined-voice-select');
@@ -225,7 +231,13 @@ document.addEventListener('DOMContentLoaded', async function () {
             last_reference_file: cloneReferenceSelect ? cloneReferenceSelect.value : null,
             last_seed: seedInput ? parseInt(seedInput.value, 10) || 0 : 0,
             last_chunk_size: chunkSizeSlider ? parseInt(chunkSizeSlider.value, 10) : 120,
-            last_split_text_enabled: splitTextToggle ? splitTextToggle.checked : true,
+            last_split_text_enabled: splitStrategySelect ? splitStrategySelect.value !== 'off' : true,
+            last_split_strategy: splitStrategySelect ? splitStrategySelect.value : 'basic',
+            last_smart_target_seconds: smartTargetInput ? parseFloat(smartTargetInput.value) : 15.0,
+            last_smart_min_seconds: smartMinInput ? parseFloat(smartMinInput.value) : 10.0,
+            last_smart_max_seconds: smartMaxInput ? parseFloat(smartMaxInput.value) : 18.0,
+            last_smart_base_wps: smartBaseWpsInput ? parseFloat(smartBaseWpsInput.value) : 2.7,
+            last_smart_overlap_sentences: smartOverlapInput ? parseInt(smartOverlapInput.value, 10) || 0 : 0,
             hide_chunk_warning: hideChunkWarning,
             hide_generation_warning: hideGenerationWarning,
             theme: localStorage.getItem('uiTheme') || 'dark',
@@ -578,10 +590,17 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (seedInput && currentUiState.last_seed !== undefined) seedInput.value = currentUiState.last_seed;
         else if (seedInput && currentConfig?.generation_defaults?.seed !== undefined) seedInput.value = currentConfig.generation_defaults.seed;
 
-        if (splitTextToggle) splitTextToggle.checked = currentUiState.last_split_text_enabled !== undefined ? currentUiState.last_split_text_enabled : true;
+        const savedStrategy = currentUiState.last_split_strategy || (currentUiState.last_split_text_enabled ? 'basic' : 'off');
+        if (splitStrategySelect) splitStrategySelect.value = savedStrategy;
 
         if (chunkSizeSlider && currentUiState.last_chunk_size !== undefined) chunkSizeSlider.value = currentUiState.last_chunk_size;
         if (chunkSizeValue) chunkSizeValue.textContent = chunkSizeSlider ? chunkSizeSlider.value : '120';
+
+        if (smartTargetInput && currentUiState.last_smart_target_seconds !== undefined) smartTargetInput.value = currentUiState.last_smart_target_seconds;
+        if (smartMinInput && currentUiState.last_smart_min_seconds !== undefined) smartMinInput.value = currentUiState.last_smart_min_seconds;
+        if (smartMaxInput && currentUiState.last_smart_max_seconds !== undefined) smartMaxInput.value = currentUiState.last_smart_max_seconds;
+        if (smartBaseWpsInput && currentUiState.last_smart_base_wps !== undefined) smartBaseWpsInput.value = currentUiState.last_smart_base_wps;
+        if (smartOverlapInput && currentUiState.last_smart_overlap_sentences !== undefined) smartOverlapInput.value = currentUiState.last_smart_overlap_sentences;
         toggleChunkControlsVisibility();
 
         const genDefaults = currentConfig.generation_defaults || {};
@@ -633,11 +652,16 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (predefinedVoiceSelect) predefinedVoiceSelect.addEventListener('change', debouncedSaveState);
         if (cloneReferenceSelect) cloneReferenceSelect.addEventListener('change', debouncedSaveState);
         if (seedInput) seedInput.addEventListener('change', debouncedSaveState);
-        if (splitTextToggle) splitTextToggle.addEventListener('change', () => { toggleChunkControlsVisibility(); debouncedSaveState(); });
+        if (splitStrategySelect) splitStrategySelect.addEventListener('change', () => { toggleChunkControlsVisibility(); debouncedSaveState(); });
         if (chunkSizeSlider) {
             chunkSizeSlider.addEventListener('input', () => { if (chunkSizeValue) chunkSizeValue.textContent = chunkSizeSlider.value; });
             chunkSizeSlider.addEventListener('change', debouncedSaveState);
         }
+        if (smartTargetInput) smartTargetInput.addEventListener('change', debouncedSaveState);
+        if (smartMinInput) smartMinInput.addEventListener('change', debouncedSaveState);
+        if (smartMaxInput) smartMaxInput.addEventListener('change', debouncedSaveState);
+        if (smartBaseWpsInput) smartBaseWpsInput.addEventListener('change', debouncedSaveState);
+        if (smartOverlapInput) smartOverlapInput.addEventListener('change', debouncedSaveState);
         const genParamSliders = [temperatureSlider, exaggerationSlider, cfgWeightSlider, speedFactorSlider];
         genParamSliders.forEach(slider => {
             if (slider) {
@@ -837,11 +861,13 @@ document.addEventListener('DOMContentLoaded', async function () {
     voiceModeRadios.forEach(radio => radio.addEventListener('change', toggleVoiceOptionsDisplay));
 
     function toggleChunkControlsVisibility() {
-        const isChecked = splitTextToggle ? splitTextToggle.checked : false;
-        if (chunkSizeControls) chunkSizeControls.classList.toggle('hidden', !isChecked);
-        if (chunkExplanation) chunkExplanation.classList.toggle('hidden', !isChecked);
+        const strategy = splitStrategySelect ? splitStrategySelect.value : 'basic';
+        const isSplitting = strategy !== 'off';
+        if (chunkSizeControls) chunkSizeControls.classList.toggle('hidden', strategy !== 'basic');
+        if (chunkExplanation) chunkExplanation.classList.toggle('hidden', !isSplitting);
+        if (intelligentControls) intelligentControls.classList.toggle('hidden', strategy !== 'intelligent');
     }
-    if (splitTextToggle) toggleChunkControlsVisibility();
+    if (splitStrategySelect) toggleChunkControlsVisibility();
 
     // --- Audio Player (WaveSurfer) ---
     function initializeWaveSurfer(audioUrl, resultDetails = {}) {
@@ -962,6 +988,8 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // --- TTS Generation Logic ---
     function getTTSFormData() {
+        const splitStrategy = splitStrategySelect ? splitStrategySelect.value : 'basic';
+        const shouldSplit = splitStrategy !== 'off';
         const jsonData = {
             text: textArea.value,
             temperature: parseFloat(temperatureSlider.value),
@@ -971,10 +999,18 @@ document.addEventListener('DOMContentLoaded', async function () {
             seed: parseInt(seedInput.value, 10),
             language: languageSelect.value,
             voice_mode: currentVoiceMode,
-            split_text: splitTextToggle.checked,
+            split_text: shouldSplit,
+            split_strategy: splitStrategy,
             chunk_size: parseInt(chunkSizeSlider.value, 10),
             output_format: outputFormatSelect.value || 'mp3'
         };
+        if (splitStrategy === 'intelligent') {
+            jsonData.smart_target_seconds = parseFloat(smartTargetInput.value);
+            jsonData.smart_min_seconds = parseFloat(smartMinInput.value);
+            jsonData.smart_max_seconds = parseFloat(smartMaxInput.value);
+            jsonData.smart_base_wps = parseFloat(smartBaseWpsInput.value);
+            jsonData.smart_overlap_sentences = parseInt(smartOverlapInput.value, 10) || 0;
+        }
         if (currentVoiceMode === 'predefined' && predefinedVoiceSelect.value !== 'none') {
             jsonData.predefined_voice_id = predefinedVoiceSelect.value;
         } else if (currentVoiceMode === 'clone' && cloneReferenceSelect.value !== 'none') {
@@ -1020,8 +1056,12 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     function proceedWithSubmissionChecks() {
         const textContent = textArea.value.trim();
-        const isSplittingEnabled = splitTextToggle.checked;
-        const currentChunkSz = parseInt(chunkSizeSlider.value, 10);
+        const splitStrategy = splitStrategySelect ? splitStrategySelect.value : 'off';
+        const isSplittingEnabled = splitStrategy !== 'off';
+        const baseWps = smartBaseWpsInput ? parseFloat(smartBaseWpsInput.value) || 2.7 : 2.7;
+        const targetSeconds = smartTargetInput ? parseFloat(smartTargetInput.value) || 15.0 : 15.0;
+        const estCharsForSmart = Math.max(80, Math.round(baseWps * targetSeconds * 5));
+        const currentChunkSz = splitStrategy === 'basic' ? (chunkSizeSlider ? parseInt(chunkSizeSlider.value, 10) : 120) : estCharsForSmart;
         const needsChunkWarn = isSplittingEnabled && textContent.length >= currentChunkSz * 1.5 &&
             currentVoiceMode !== 'predefined' && currentVoiceMode !== 'clone' &&
             (!seedInput || parseInt(seedInput.value, 10) === 0 || seedInput.value === '') && !hideChunkWarning;

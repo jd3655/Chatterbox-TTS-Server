@@ -133,11 +133,14 @@
                                     </svg>
                                     Generate Speech
                                 </button>
-                                <label for="split-text-toggle" class="checkbox-label">
-                                    <input type="checkbox" id="split-text-toggle" name="split_text"
-                                        class="form-checkbox">
-                                    <span>Split text into chunks</span>
-                                </label>
+                                <div class="flex-row items-center gap-2">
+                                    <label for="split-strategy-select" class="form-label small">Split Strategy:</label>
+                                    <select id="split-strategy-select" name="split_strategy" class="form-select short">
+                                        <option value="off">Off</option>
+                                        <option value="basic" selected>Basic (sentence)</option>
+                                        <option value="intelligent">Intelligent (word-aware)</option>
+                                    </select>
+                                </div>
                                 <div id="chunk-size-controls" class="flex-row items-center gap-2 hidden">
                                     <label for="chunk-size-slider" class="form-label small">Chunk Size:</label>
                                     <input type="range" id="chunk-size-slider" name="chunk_size" min="50" max="1000"
@@ -145,9 +148,47 @@
                                     <span id="chunk-size-value" class="slider-value tabular-nums">120</span>
                                 </div>
                             </div>
+                            <div id="intelligent-controls" class="flex flex-col gap-3 hidden">
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div class="form-group compact">
+                                        <label for="smart-target-seconds" class="form-label small">Target seconds</label>
+                                        <input type="number" id="smart-target-seconds" class="form-input"
+                                            value="15" min="1" step="0.5">
+                                        <p class="form-hint">Aim for ~15s chunks for consistent prosody.</p>
+                                    </div>
+                                    <div class="form-group compact">
+                                        <label for="smart-min-seconds" class="form-label small">Min seconds</label>
+                                        <input type="number" id="smart-min-seconds" class="form-input" value="10"
+                                            min="1" step="0.5">
+                                        <p class="form-hint">Protects against overly short segments.</p>
+                                    </div>
+                                    <div class="form-group compact">
+                                        <label for="smart-max-seconds" class="form-label small">Max seconds</label>
+                                        <input type="number" id="smart-max-seconds" class="form-input" value="18"
+                                            min="1" step="0.5">
+                                        <p class="form-hint">Encourages natural boundaries before long pauses.</p>
+                                    </div>
+                                </div>
+                                <details class="rounded-md border border-slate-200 dark:border-slate-700 p-3">
+                                    <summary class="font-medium cursor-pointer select-none">Advanced</summary>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                                        <div class="form-group compact">
+                                            <label for="smart-base-wps" class="form-label small">Base words / second</label>
+                                            <input type="number" id="smart-base-wps" class="form-input" value="2.7"
+                                                min="0.1" max="10" step="0.1">
+                                            <p class="form-hint">Adjust if your voice is faster/slower.</p>
+                                        </div>
+                                        <div class="form-group compact">
+                                            <label for="smart-overlap-sentences" class="form-label small">Overlap sentences</label>
+                                            <input type="number" id="smart-overlap-sentences" class="form-input" value="0"
+                                                min="0" max="5" step="1">
+                                            <p class="form-hint">Repeat last N sentences into next chunk for crossfades.</p>
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
                             <p id="chunk-explanation" class="form-hint mb-6 hidden">
-                                Splitting is essential for longer texts like articles or audiobook chapters. Recommended
-                                chunk size: ~150-400 characters.
+                                <strong>Basic:</strong> splits on sentences (uses chunk size). <strong>Intelligent:</strong> word-aware timing for smoother multi-chunk narration.
                             </p>
 
                             <div class="form-group">

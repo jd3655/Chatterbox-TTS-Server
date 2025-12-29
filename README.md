@@ -79,7 +79,7 @@ The server expects plain text input for synthesis and we solve the complexity of
 *   **Paralinguistic prompting (Turbo):** Native tags like `[laugh]`, `[cough]`, and `[chuckle]` for natural non-speech reactions inside the same generated voice.
 *   **Original Chatterbox strengths:** High quality English output plus unique "emotion exaggeration control" and 0.5B LLaMA backbone.
 *   **Multi-Platform Acceleration:** Full support for **NVIDIA (CUDA)**, **AMD (ROCm)**, and **Apple Silicon (MPS)** GPUs, with an automatic fallback to **CPU**, ensuring you can run on any hardware.
-*   **Large Text Handling:** Intelligently splits long plain text inputs into manageable chunks based on sentence structure, processes them sequentially, and seamlessly concatenates the audio.
+*   **Large Text Handling:** Split strategies (Off/Basic/Intelligent) to process long inputs safely, targeting sentence or word-aware boundaries for consistent audio stitching.
 *   **📚 Audiobook Generation:** Perfect for creating complete audiobooks - simply paste an entire book's text and the server automatically processes it into a single, seamless audio file with consistent voice quality throughout.
 *   **Predefined Voices:** Select from curated, ready-to-use synthetic voices for consistent and reliable output without cloning setup.
 *   **Voice Cloning:** Generate speech using a voice similar to an uploaded reference audio file.
@@ -105,8 +105,9 @@ This server application enhances the underlying `chatterbox-tts` engine with the
     *   Write native tags like `[laugh]`, `[cough]`, and `[chuckle]` directly in your text when using Chatterbox‑Turbo.
     *   New presets demonstrate paralinguistic prompting for agent-style scripts and expressive narration.
 *   **Large Text Processing (Chunking):**
-    *   Automatically handles long plain text inputs by intelligently splitting them into smaller chunks based on sentence boundaries.
-    *   Processes each chunk individually and seamlessly concatenates the resulting audio, overcoming potential generation limits of the TTS engine.
+    *   Three modes: **Off**, **Basic** (sentence-boundary chunking with adjustable size), and **Intelligent** (word-aware, duration-targeted).
+    *   Processes each chunk individually and seamlessly concatenates the resulting audio, overcoming potential generation limits of the TTS engine while preserving paralinguistic tags like `[laugh]`.
+    *   Intelligent mode targets ~15s chunks by default (bounded by 10-18s) and accounts for `speed_factor` to keep prosody stable across long inputs.
     *   **Ideal for audiobook generation** - paste entire books and get professional-quality audiobooks with consistent narration.
     *   Configurable via UI toggle ("Split text into chunks") and chunk size slider.
 *   **Predefined Voices:**
@@ -851,6 +852,16 @@ One moment… [cough] sorry about that. Let's get this fixed.
 
 Turbo supports native tags like `[laugh]`, `[cough]`, and `[chuckle]` for more realistic, expressive speech. These tags are ignored when using Original Chatterbox.
 
+### Split Strategy Options
+
+Use the **Split Strategy** control in the Web UI to manage long inputs:
+
+* **Off:** Send the entire text as one chunk.
+* **Basic:** Sentence-boundary chunking with the existing chunk-size slider.
+* **Intelligent:** Word-aware chunking that targets ~15s of audio (bounded by 10–18s by default) and adjusts targets using `speed_factor`. Advanced options let you tune base words-per-second estimates and optional overlap sentences for downstream crossfades.
+
+When calling `/tts` directly, `split_strategy` defaults to `"basic"` whenever `split_text=true`. Set `split_strategy="intelligent"` to enable the smarter splitter; otherwise leave it out for backward compatibility.
+
 ### API Endpoints (`/docs` for interactive details)
 
 The primary endpoint for TTS generation is `/tts`, which offers detailed control over the synthesis process.
@@ -862,8 +873,10 @@ The primary endpoint for TTS generation is `/tts`, which offers detailed control
         *   `predefined_voice_id` (string, optional): Filename of predefined voice (if `voice_mode` is "predefined").
         *   `reference_audio_filename` (string, optional): Filename of reference audio (if `voice_mode` is "clone").
         *   `output_format` (string, "wav" or "opus", default "wav").
-        *   `split_text` (boolean, default True): Whether to chunk long text.
-        *   `chunk_size` (integer, default 120): Target characters per chunk.
+        *   `split_text` (boolean, default True): Whether to chunk long text (when False, `split_strategy` is ignored).
+        *   `split_strategy` (string, optional): `"off"`, `"basic"`, or `"intelligent"`. Missing value defaults to `"basic"` when `split_text` is true.
+        *   `chunk_size` (integer, default 120): Target characters per chunk for **Basic** splitting.
+        *   `smart_target_seconds`, `smart_min_seconds`, `smart_max_seconds`, `smart_base_wps`, `smart_overlap_sentences`: Intelligent split controls (default 15s target, 10–18s bounds, 2.7 base wps, 0 overlap). `speed_factor` influences timing estimates automatically.
         *   `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`: Generation parameters overriding defaults.
     *   **Response:** Streaming audio (`audio/wav` or `audio/opus`).
 *   **`/v1/audio/speech` (POST):** OpenAI-compatible.
