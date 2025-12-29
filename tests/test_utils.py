@@ -144,3 +144,19 @@ def test_soft_boundaries_used_for_long_sentences():
     assert len(chunks) > 1
     for chunk in chunks:
         assert chunk.strip()
+
+
+def test_normalize_pause_tags_basic_conversion():
+    assert utils.normalize_pause_tags("Hi[1s]there") == "Hi[pause:1.0s]there"
+
+
+def test_normalize_pause_tags_preserves_other_tags():
+    assert utils.normalize_pause_tags("Hi[laugh]there") == "Hi[laugh]there"
+
+
+def test_normalize_pause_tags_decimal():
+    assert utils.normalize_pause_tags("Hi[0.25s]there") == "Hi[pause:0.25s]there"
+
+
+def test_normalize_pause_tags_out_of_range_clamped():
+    assert utils.normalize_pause_tags("Hi[15s]there") == "Hi[pause:10.0s]there"
