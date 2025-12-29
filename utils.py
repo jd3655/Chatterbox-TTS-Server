@@ -10,7 +10,7 @@ import time
 import io
 import uuid
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, Set, List
+from typing import Optional, Tuple, Dict, Any, Set, List, Callable
 from pydub import AudioSegment
 
 import numpy as np
@@ -202,6 +202,13 @@ NUMBER_DOT_NUMBER_PATTERN = re.compile(
 VERSION_PATTERN = re.compile(
     r"[vV]?\d+(\.\d+)+"
 )  # Matches version numbers like v1.0.2, 2.3.4
+# Pause tags
+PAUSE_SHORTHAND_PATTERN = re.compile(r"\[(\d+(?:\.\d+)?)s\]", re.IGNORECASE)
+PAUSE_CANONICAL_PATTERN = re.compile(
+    r"\[pause:(\d+(?:\.\d+)?)s\]", re.IGNORECASE
+)
+MIN_PAUSE_SECONDS = 0.0
+MAX_PAUSE_SECONDS = 10.0
 # Pattern to find potential sentence endings (punctuation followed by quote/space/end of string).
 POTENTIAL_END_PATTERN = re.compile(r'([.!?])(["\']?)(\s+|$)')
 # Pattern to detect start-of-line bullet points or numbered lists.
@@ -904,6 +911,79 @@ def remove_long_unvoiced_segments(
 
 
 # --- Text Processing Utilities ---
+def _ensure_safe_duration(duration: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(max_value, duration))
+
+
+def _format_pause(seconds: float) -> str:
+    formatted = f"{seconds:.3f}".rstrip("0").rstrip(".")
+    if "." not in formatted:
+        formatted = f"{formatted}.0"
+    return f"[pause:{formatted}s]"
+
+
+def normalize_pause_tags(text: str, *, clamp: bool = True) -> str:
+    """
+    Convert shorthand pause tags like ``[1s]`` into canonical ``[pause:1.0s]``.
+
+    Only matches complete bracket tokens with numeric seconds and a trailing ``s``.
+    Non-numeric tags (e.g., ``[laugh]``) are left untouched.
+
+    Args:
+        text: Input text possibly containing shorthand pause tags.
+        clamp: When True, values outside the allowed range are clamped to the
+            nearest boundary. When False, a ValueError is raised for out-of-range
+            pauses.
+
+    Returns:
+        Text with shorthand pause tags normalized to canonical form.
+
+    Raises:
+        ValueError: If a pause value is outside bounds and ``clamp`` is False.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        raw_value = match.group(1)
+        try:
+            seconds = float(raw_value)
+        except ValueError:
+            return match.group(0)
+
+        if clamp:
+            seconds = _ensure_safe_duration(seconds, MIN_PAUSE_SECONDS, MAX_PAUSE_SECONDS)
+        else:
+            if not (MIN_PAUSE_SECONDS <= seconds <= MAX_PAUSE_SECONDS):
+                raise ValueError(
+                    f"Pause duration {seconds} is outside allowed range [{MIN_PAUSE_SECONDS}, {MAX_PAUSE_SECONDS}] seconds."
+                )
+
+        return _format_pause(seconds)
+
+    return PAUSE_SHORTHAND_PATTERN.sub(_replace, text)
+
+
+def split_text_and_pauses(
+    text: str, *, clamp: bool = True
+) -> Tuple[str, List[Tuple[str, Optional[float]]]]:
+    """
+    Normalize shorthand pause tags and split text into (segment, pause_seconds) pairs.
+
+    Each tuple represents a text segment followed by an optional pause duration (seconds).
+    The final tuple always has ``pause_seconds`` set to ``None``.
+    """
+    normalized = normalize_pause_tags(text, clamp=clamp)
+    segments: List[Tuple[str, Optional[float]]] = []
+    last_idx = 0
+
+    for match in PAUSE_CANONICAL_PATTERN.finditer(normalized):
+        pause_value = float(match.group(1))
+        segments.append((normalized[last_idx:match.start()], pause_value))
+        last_idx = match.end()
+
+    segments.append((normalized[last_idx:], None))
+    return normalized, segments
+
+
 def _is_valid_sentence_end(text: str, period_index: int) -> bool:
     """
     Checks if a period at a given index in the text is likely a valid sentence terminator,

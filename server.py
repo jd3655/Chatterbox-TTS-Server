@@ -12,10 +12,11 @@ import time
 import uuid
 import yaml  # For loading presets
 import numpy as np
+import torch
 import librosa  # For potential direct use if needed, though utils.py handles most
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any, Literal, Tuple
 import webbrowser  # For automatic browser opening
 import threading  # For automatic browser opening
 
@@ -339,6 +340,73 @@ def _apply_edge_fades(
         result[-fade_samples:] *= np.linspace(1, 0, fade_samples, dtype=np.float32)
 
     return result
+
+
+def _create_silence_tensor(duration_seconds: float, sample_rate: int) -> torch.Tensor:
+    samples = max(int(round(duration_seconds * sample_rate)), 0)
+    if samples == 0:
+        return torch.zeros(0, dtype=torch.float32)
+    return torch.zeros(samples, dtype=torch.float32)
+
+
+def _synthesize_with_pause_support(
+    text: str,
+    *,
+    audio_prompt_path: Optional[str],
+    temperature: float,
+    exaggeration: float,
+    cfg_weight: float,
+    seed: int,
+) -> Tuple[Optional[torch.Tensor], Optional[int]]:
+    normalized_text, segments = utils.split_text_and_pauses(text, clamp=True)
+    has_pause = any(pause is not None for _, pause in segments)
+    if not has_pause:
+        return engine.synthesize(
+            text=normalized_text,
+            audio_prompt_path=audio_prompt_path,
+            temperature=temperature,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            seed=seed,
+        )
+
+    sample_rate_hint = getattr(getattr(engine, "chatterbox_model", None), "sr", None)
+    sample_rate: Optional[int] = None
+    audio_parts: List[torch.Tensor] = []
+
+    for segment_text, pause_seconds in segments:
+        seg_sr: Optional[int] = None
+        if segment_text:
+            seg_tensor, seg_sr = engine.synthesize(
+                text=segment_text,
+                audio_prompt_path=audio_prompt_path,
+                temperature=temperature,
+                exaggeration=exaggeration,
+                cfg_weight=cfg_weight,
+                seed=seed,
+            )
+            if seg_tensor is None or seg_sr is None:
+                return None, None
+            segment_audio = seg_tensor.detach().cpu().squeeze()
+            if segment_audio.ndim > 1:
+                segment_audio = segment_audio.view(-1)
+            if sample_rate is None:
+                sample_rate = seg_sr
+            audio_parts.append(segment_audio)
+
+        if pause_seconds is not None:
+            sr_for_pause = (
+                sample_rate or seg_sr or sample_rate_hint or get_audio_sample_rate()
+            )
+            silence = _create_silence_tensor(pause_seconds, sr_for_pause)
+            if sample_rate is None:
+                sample_rate = sr_for_pause
+            audio_parts.append(silence)
+
+    if not audio_parts or sample_rate is None:
+        return None, None
+
+    return torch.cat(audio_parts), sample_rate
 
 
 def _remove_dc_offset(
@@ -842,6 +910,11 @@ async def custom_tts_endpoint(
     )
     logger.debug(f"Input text (first 100 chars): '{request.text[:100]}...'")
 
+    try:
+        normalized_input_text = utils.normalize_pause_tags(request.text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     audio_prompt_path_for_engine: Optional[Path] = None
     if request.voice_mode == "predefined":
         if not request.predefined_voice_id:
@@ -902,7 +975,7 @@ async def custom_tts_endpoint(
     )
 
     if not request.split_text or effective_split_strategy == "off":
-        text_chunks = [request.text]
+        text_chunks = [normalized_input_text]
         logger.info("Processing text as a single chunk (splitting disabled).")
     elif effective_split_strategy == "intelligent":
         speed_factor = (
@@ -911,7 +984,7 @@ async def custom_tts_endpoint(
             else get_gen_default_speed_factor()
         )
         text_chunks = utils.smart_split_text(
-            request.text,
+            normalized_input_text,
             target_seconds=(
                 request.smart_target_seconds
                 if request.smart_target_seconds is not None
@@ -934,17 +1007,19 @@ async def custom_tts_endpoint(
             ),
         )
         perf_monitor.record(f"Text smart-split into {len(text_chunks)} chunks")
-    elif len(request.text) > (
+    elif len(normalized_input_text) > (
         request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5
     ):
         chunk_size_to_use = (
             request.chunk_size if request.chunk_size is not None else 120
         )
         logger.info(f"Splitting text into chunks of size ~{chunk_size_to_use}.")
-        text_chunks = utils.chunk_text_by_sentences(request.text, chunk_size_to_use)
+        text_chunks = utils.chunk_text_by_sentences(
+            normalized_input_text, chunk_size_to_use
+        )
         perf_monitor.record(f"Text split into {len(text_chunks)} chunks")
     else:
-        text_chunks = [request.text]
+        text_chunks = [normalized_input_text]
         logger.info(
             "Processing text as a single chunk (splitting not enabled or text too short)."
         )
@@ -957,8 +1032,8 @@ async def custom_tts_endpoint(
     for i, chunk in enumerate(text_chunks):
         logger.info(f"Synthesizing chunk {i+1}/{len(text_chunks)}...")
         try:
-            chunk_audio_tensor, chunk_sr_from_engine = engine.synthesize(
-                text=chunk,
+            chunk_audio_tensor, chunk_sr_from_engine = _synthesize_with_pause_support(
+                chunk,
                 audio_prompt_path=(
                     str(audio_prompt_path_for_engine)
                     if audio_prompt_path_for_engine
@@ -1281,14 +1356,19 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
         )
 
     try:
+        try:
+            normalized_text = utils.normalize_pause_tags(request.input_)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         # Use the provided seed or the default
         seed_to_use = (
             request.seed if request.seed is not None else get_gen_default_seed()
         )
 
-        # Synthesize the audio
-        audio_tensor, sr = engine.synthesize(
-            text=request.input_,
+        # Synthesize the audio with pause support
+        audio_tensor, sr = _synthesize_with_pause_support(
+            normalized_text,
             audio_prompt_path=str(audio_prompt_path),
             temperature=get_gen_default_temperature(),
             exaggeration=get_gen_default_exaggeration(),

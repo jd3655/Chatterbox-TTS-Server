@@ -47,6 +47,7 @@ This server is based on the architecture and UI of our [Dia-TTS-Server](https://
 
 - Turbo adds **native paralinguistic tags** you can write directly into your text, e.g. `…calling you back [chuckle]…`.
 - Supported tags include `[laugh]`, `[cough]`, and `[chuckle]`, plus text-based prompting for reactions like sigh, gasp, and cough.
+- Inline pause shorthand like `[1s]` or `[0.3s]` is automatically normalized to canonical `[pause:1.0s]` tags with safe clamping (0–10 seconds) before synthesis.
 - Added **new presets** in `ui/presets.yaml` demonstrating paralinguistic prompting for agent-style scripts and expressive reads.
 
 ### ✅ Original Chatterbox remains first‑class
