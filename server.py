@@ -43,7 +43,6 @@ from fastapi.middleware.cors import CORSMiddleware
 # --- Internal Project Imports ---
 from config import (
     config_manager,
-    get_default_voice_id,
     get_host,
     get_port,
     get_log_file_path,
@@ -73,7 +72,6 @@ from models import (  # Pydantic models
 import utils  # Utility functions
 import auto_pauses  # Auto pause insertion
 import text_normalization
-import multi_voice
 
 from pydantic import BaseModel, Field
 
@@ -507,377 +505,6 @@ def _synthesize_with_pause_support(
         return None, None
 
     return torch.cat(audio_parts), sample_rate
-
-
-def _resolve_predefined_voice_path(voice_id: str) -> Path:
-    voices_dir = get_predefined_voices_path(ensure_absolute=True)
-    potential_path = voices_dir / voice_id
-    if not potential_path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Predefined voice file '{voice_id}' not found.",
-        )
-    return potential_path
-
-
-def _prepare_text_for_request(
-    raw_text: str, request: CustomTTSRequest
-) -> str:
-    try:
-        normalized_currency_text = text_normalization.normalize_text(
-            raw_text,
-            normalize_currency=request.normalize_currency,
-            currency_max_value=(
-                request.currency_max_value
-                if request.currency_max_value is not None
-                else 999_999_999
-            ),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    try:
-        merged_pronunciation_dict = _resolve_pronunciation_dict(
-            request.pronunciation_dict, request.pronunciation_dict_mode
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    try:
-        pronunciation_applied_text = apply_pronunciation_dict(
-            normalized_currency_text, merged_pronunciation_dict
-        )
-        normalized_input_text = utils.normalize_pause_tags(pronunciation_applied_text)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    processed_input_text = normalized_input_text
-
-    if request.auto_pauses:
-        pause_style = request.pause_style or "audiobook"
-        pause_strength = _clamp_value(
-            request.pause_strength if request.pause_strength is not None else 1.0,
-            0.5,
-            2.0,
-        )
-        pause_max = _clamp_value(
-            request.pause_max_seconds if request.pause_max_seconds is not None else 1.8,
-            0.2,
-            3.0,
-        )
-        pause_min = _clamp_value(
-            request.pause_min_seconds if request.pause_min_seconds is not None else 0.04,
-            0.0,
-            0.2,
-        )
-        if pause_min > pause_max:
-            pause_min = pause_max
-        pause_topup_only = (
-            request.pause_topup_only if request.pause_topup_only is not None else True
-        )
-        speed_factor_for_pauses = (
-            request.speed_factor
-            if request.speed_factor is not None
-            else get_gen_default_speed_factor()
-        )
-
-        processed_input_text = auto_pauses.insert_auto_pauses(
-            processed_input_text,
-            pause_style,
-            speed_factor=speed_factor_for_pauses,
-            strength=pause_strength,
-            topup_only=pause_topup_only,
-            min_pause=pause_min,
-            max_pause=pause_max,
-        )
-
-    return processed_input_text
-
-
-def _synthesize_processed_text(
-    processed_input_text: str,
-    request: CustomTTSRequest,
-    *,
-    audio_prompt_path_for_engine: Optional[Path],
-    perf_monitor: Optional[utils.PerformanceMonitor] = None,
-) -> Tuple[np.ndarray, int]:
-    all_audio_segments_np: List[np.ndarray] = []
-    engine_output_sample_rate: Optional[int] = None
-
-    effective_split_strategy = (
-        request.split_strategy if request.split_strategy else "basic"
-    )
-
-    if not request.split_text or effective_split_strategy == "off":
-        text_chunks = [processed_input_text]
-        logger.info("Processing text as a single chunk (splitting disabled).")
-    elif effective_split_strategy == "intelligent":
-        speed_factor = (
-            request.speed_factor
-            if request.speed_factor is not None
-            else get_gen_default_speed_factor()
-        )
-        text_chunks = utils.smart_split_text(
-            processed_input_text,
-            target_seconds=(
-                request.smart_target_seconds
-                if request.smart_target_seconds is not None
-                else 15.0
-            ),
-            min_seconds=(
-                request.smart_min_seconds if request.smart_min_seconds is not None else 10.0
-            ),
-            max_seconds=(
-                request.smart_max_seconds if request.smart_max_seconds is not None else 18.0
-            ),
-            base_words_per_second=(
-                request.smart_base_wps if request.smart_base_wps is not None else 2.7
-            ),
-            speed_factor=speed_factor,
-            overlap_sentences=(
-                request.smart_overlap_sentences
-                if request.smart_overlap_sentences is not None
-                else 0
-            ),
-        )
-        if perf_monitor:
-            perf_monitor.record(f"Text smart-split into {len(text_chunks)} chunks")
-    elif len(processed_input_text) > (
-        request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5
-    ):
-        chunk_size_to_use = request.chunk_size if request.chunk_size is not None else 120
-        logger.info(f"Splitting text into chunks of size ~{chunk_size_to_use}.")
-        text_chunks = utils.chunk_text_by_sentences(
-            processed_input_text, chunk_size_to_use
-        )
-        if perf_monitor:
-            perf_monitor.record(f"Text split into {len(text_chunks)} chunks")
-    else:
-        text_chunks = [processed_input_text]
-        logger.info(
-            "Processing text as a single chunk (splitting not enabled or text too short)."
-        )
-
-    if not text_chunks:
-        raise HTTPException(
-            status_code=400, detail="Text processing resulted in no usable chunks."
-        )
-
-    for i, chunk in enumerate(text_chunks):
-        logger.info(f"Synthesizing chunk {i+1}/{len(text_chunks)}...")
-        try:
-            chunk_audio_tensor, chunk_sr_from_engine = _synthesize_with_pause_support(
-                chunk,
-                audio_prompt_path=(
-                    str(audio_prompt_path_for_engine)
-                    if audio_prompt_path_for_engine
-                    else None
-                ),
-                temperature=(
-                    request.temperature
-                    if request.temperature is not None
-                    else get_gen_default_temperature()
-                ),
-                exaggeration=(
-                    request.exaggeration
-                    if request.exaggeration is not None
-                    else get_gen_default_exaggeration()
-                ),
-                cfg_weight=(
-                    request.cfg_weight
-                    if request.cfg_weight is not None
-                    else get_gen_default_cfg_weight()
-                ),
-                seed=(request.seed if request.seed is not None else get_gen_default_seed()),
-            )
-            if perf_monitor:
-                perf_monitor.record(f"Engine synthesized chunk {i+1}")
-
-            if chunk_audio_tensor is None or chunk_sr_from_engine is None:
-                error_detail = f"TTS engine failed to synthesize audio for chunk {i+1}."
-                logger.error(error_detail)
-                raise HTTPException(status_code=500, detail=error_detail)
-
-            if engine_output_sample_rate is None:
-                engine_output_sample_rate = chunk_sr_from_engine
-            elif engine_output_sample_rate != chunk_sr_from_engine:
-                logger.warning(
-                    f"Inconsistent sample rate from engine: chunk {i+1} ({chunk_sr_from_engine}Hz) "
-                    f"differs from previous ({engine_output_sample_rate}Hz). Using first chunk's SR."
-                )
-
-            current_processed_audio_tensor = chunk_audio_tensor
-
-            speed_factor_to_use = (
-                request.speed_factor
-                if request.speed_factor is not None
-                else get_gen_default_speed_factor()
-            )
-            if speed_factor_to_use != 1.0:
-                current_processed_audio_tensor, _ = utils.apply_speed_factor(
-                    current_processed_audio_tensor,
-                    chunk_sr_from_engine,
-                    speed_factor_to_use,
-                )
-                if perf_monitor:
-                    perf_monitor.record(f"Speed factor applied to chunk {i+1}")
-
-            processed_audio_np = current_processed_audio_tensor.cpu().numpy().squeeze()
-            all_audio_segments_np.append(processed_audio_np)
-
-        except HTTPException as http_exc:
-            raise http_exc
-        except Exception as e_chunk:
-            error_detail = f"Error processing audio chunk {i+1}: {str(e_chunk)}"
-            logger.error(error_detail, exc_info=True)
-            raise HTTPException(status_code=500, detail=error_detail)
-
-    if not all_audio_segments_np:
-        logger.error("No audio segments were successfully generated.")
-        raise HTTPException(
-            status_code=500, detail="Audio generation resulted in no output."
-        )
-
-    if engine_output_sample_rate is None:
-        logger.error("Engine output sample rate could not be determined.")
-        raise HTTPException(
-            status_code=500, detail="Failed to determine engine sample rate."
-        )
-
-    try:
-        final_audio_np = _stitch_audio_segments(
-            all_audio_segments_np, engine_output_sample_rate, perf_monitor
-        )
-    except ValueError as e_concat:
-        logger.error(f"Audio concatenation/stitching failed: {e_concat}", exc_info=True)
-        for idx, seg in enumerate(all_audio_segments_np):
-            logger.error(f"Segment {idx} shape: {seg.shape}, dtype: {seg.dtype}")
-        raise HTTPException(
-            status_code=500, detail=f"Audio stitching error: {e_concat}"
-        )
-
-    return final_audio_np.astype(np.float32, copy=False), engine_output_sample_rate
-
-
-def _stitch_audio_segments(
-    all_audio_segments_np: List[np.ndarray],
-    engine_output_sample_rate: int,
-    perf_monitor: Optional[utils.PerformanceMonitor] = None,
-) -> np.ndarray:
-    SENTENCE_PAUSE_MS = 200
-    CROSSFADE_MS = 20
-    SAFETY_FADE_MS = 3
-    ENABLE_DC_REMOVAL = False
-    DC_HIGHPASS_HZ = 15
-    PEAK_NORMALIZE_THRESHOLD = 0.99
-    PEAK_NORMALIZE_TARGET = 0.95
-
-    enable_smart_stitching = config_manager.get_bool(
-        "audio_processing.enable_crossfade", True
-    )
-
-    if not engine_output_sample_rate or engine_output_sample_rate <= 0:
-        logger.error(
-            f"Invalid sample rate: {engine_output_sample_rate}, falling back to raw concatenation"
-        )
-        final_audio_np = (
-            np.concatenate(all_audio_segments_np)
-            if len(all_audio_segments_np) > 1
-            else all_audio_segments_np[0]
-        )
-    elif len(all_audio_segments_np) == 1:
-        final_audio_np = all_audio_segments_np[0]
-        logger.info("Single audio chunk - no stitching required")
-    elif enable_smart_stitching:
-        fade_samples = int(CROSSFADE_MS / 1000 * engine_output_sample_rate)
-        desired_silence_samples = int(
-            SENTENCE_PAUSE_MS / 1000 * engine_output_sample_rate
-        )
-        silence_buffer_samples = desired_silence_samples + (fade_samples * 2)
-
-        chunks = []
-        for chunk in all_audio_segments_np:
-            processed = chunk.astype(np.float32, copy=True)
-            if ENABLE_DC_REMOVAL:
-                processed = _remove_dc_offset(
-                    processed, engine_output_sample_rate, DC_HIGHPASS_HZ
-                )
-            chunks.append(processed)
-
-        result = chunks[0]
-        for i in range(1, len(chunks)):
-            silence = np.zeros(silence_buffer_samples, dtype=np.float32)
-            result = _crossfade_with_overlap(result, silence, fade_samples)
-            result = _crossfade_with_overlap(result, chunks[i], fade_samples)
-
-        final_audio_np = result
-        logger.info(
-            f"Smart stitching applied: {len(chunks)} chunks, "
-            f"{CROSSFADE_MS}ms crossfades, {SENTENCE_PAUSE_MS}ms pauses"
-        )
-    else:
-        fade_samples = int(SAFETY_FADE_MS / 1000 * engine_output_sample_rate)
-        num_chunks = len(all_audio_segments_np)
-
-        processed_chunks = []
-        for i, chunk in enumerate(all_audio_segments_np):
-            is_first = i == 0
-            is_last = i == num_chunks - 1
-
-            processed = _apply_edge_fades(
-                chunk,
-                fade_samples,
-                fade_in=(not is_first),
-                fade_out=(not is_last),
-            )
-            processed_chunks.append(processed)
-
-        final_audio_np = np.concatenate(processed_chunks)
-        logger.info(
-            f"Safety edge fades applied: {num_chunks} chunks, {SAFETY_FADE_MS}ms linear fades"
-        )
-
-    final_audio_np = final_audio_np.astype(np.float32, copy=False)
-
-    peak_amplitude = np.abs(final_audio_np).max()
-    if peak_amplitude > PEAK_NORMALIZE_THRESHOLD:
-        final_audio_np = final_audio_np * (PEAK_NORMALIZE_TARGET / peak_amplitude)
-        logger.warning(
-            f"Audio normalized to prevent clipping (peak was {peak_amplitude:.3f})"
-        )
-
-    if config_manager.get_bool("audio_processing.enable_silence_trimming", False):
-        final_audio_np = utils.trim_lead_trail_silence(
-            final_audio_np, engine_output_sample_rate
-        )
-        if perf_monitor:
-            perf_monitor.record("Global silence trim applied")
-
-    if config_manager.get_bool("audio_processing.enable_internal_silence_fix", False):
-        final_audio_np = utils.fix_internal_silence(
-            final_audio_np, engine_output_sample_rate
-        )
-        if perf_monitor:
-            perf_monitor.record("Global internal silence fix applied")
-
-    if config_manager.get_bool(
-        "audio_processing.enable_unvoiced_removal", False
-    ) and utils.PARSELMOUTH_AVAILABLE:
-        final_audio_np = utils.remove_long_unvoiced_segments(
-            final_audio_np, engine_output_sample_rate
-        )
-        if perf_monitor:
-            perf_monitor.record("Global unvoiced removal applied")
-
-    if enable_smart_stitching and config_manager.get_bool(
-        "audio_processing.enable_silence_trimming", False
-    ):
-        logger.warning(
-            "Smart stitching adds sentence pauses, but silence trimming is enabled. "
-            "Leading/trailing pauses may be removed."
-        )
-
-    return final_audio_np
 
 
 def _remove_dc_offset(
@@ -1380,6 +1007,7 @@ async def custom_tts_endpoint(
             status_code=503,
             detail="TTS engine model is not currently loaded or available.",
         )
+
     logger.info(
         f"Received /tts request: mode='{request.voice_mode}', format='{request.output_format}'"
     )
@@ -1388,158 +1016,422 @@ async def custom_tts_endpoint(
     )
     logger.debug(f"Input text (first 100 chars): '{request.text[:100]}...'")
 
-    final_output_sample_rate = get_audio_sample_rate()
-
-    # --- Multi-Voice Handling ---
-    if request.multi_voice:
-        if request.voice_mode != "predefined":
-            raise HTTPException(
-                status_code=400,
-                detail="Multi-voice mode currently supports predefined voices only.",
-            )
-        all_available_voices = {v["filename"] for v in utils.get_predefined_voices()}
-        if not all_available_voices:
-            raise HTTPException(
-                status_code=400,
-                detail="No predefined voices available for multi-voice synthesis.",
-            )
-        default_voice = (
-            request.multi_voice_default_voice
-            or request.predefined_voice_id
-            or get_default_voice_id()
+    try:
+        normalized_currency_text = text_normalization.normalize_text(
+            request.text,
+            normalize_currency=request.normalize_currency,
+            currency_max_value=(
+                request.currency_max_value
+                if request.currency_max_value is not None
+                else 999_999_999
+            ),
         )
-        if not default_voice:
-            default_voice = next(iter(all_available_voices))
-        if default_voice not in all_available_voices:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Default voice '{default_voice}' is not available. Allowed voices: {sorted(all_available_voices)}",
-            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-        segments: List[Dict[str, str]] = []
-        mode = request.multi_voice_mode or "paragraphs"
+    try:
+        merged_pronunciation_dict = _resolve_pronunciation_dict(
+            request.pronunciation_dict, request.pronunciation_dict_mode
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-        if request.multi_voice_segments:
-            for seg in request.multi_voice_segments:
-                if not seg.get("text", "").strip():
-                    continue
-                voice_id = seg.get("voice_id") or default_voice
-                segments.append({"voice_id": voice_id, "text": seg.get("text", "")})
-        elif mode == "directives":
-            parsed_segments = multi_voice.parse_voice_directives(request.text)
-            for seg in parsed_segments:
-                voice_id = seg.get("voice_id") or default_voice
-                segments.append({"voice_id": voice_id, "text": seg.get("text", "")})
-        else:
-            paragraphs = multi_voice.split_paragraphs(request.text)
-            assignments = request.multi_voice_assignments or []
-            segments = multi_voice.build_segments_from_paragraphs(
-                paragraphs, assignments, default_voice
-            )
+    try:
+        pronunciation_applied_text = apply_pronunciation_dict(
+            normalized_currency_text, merged_pronunciation_dict
+        )
+        normalized_input_text = utils.normalize_pause_tags(pronunciation_applied_text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-        if not segments:
-            segments = [{"voice_id": default_voice, "text": request.text}]
+    processed_input_text = normalized_input_text
 
-        unique_voices = {seg["voice_id"] for seg in segments}
-        unknown = sorted(unique_voices - all_available_voices)
-        if unknown:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown voice IDs: {unknown}. Allowed voices: {sorted(all_available_voices)}",
-            )
+    if request.auto_pauses:
+        pause_style = request.pause_style or "audiobook"
+        pause_strength = _clamp_value(
+            request.pause_strength if request.pause_strength is not None else 1.0,
+            0.5,
+            2.0,
+        )
+        pause_max = _clamp_value(
+            request.pause_max_seconds if request.pause_max_seconds is not None else 1.8,
+            0.2,
+            3.0,
+        )
+        pause_min = _clamp_value(
+            request.pause_min_seconds if request.pause_min_seconds is not None else 0.04,
+            0.0,
+            0.2,
+        )
+        if pause_min > pause_max:
+            pause_min = pause_max
+        pause_topup_only = (
+            request.pause_topup_only if request.pause_topup_only is not None else True
+        )
+        speed_factor_for_pauses = (
+            request.speed_factor
+            if request.speed_factor is not None
+            else get_gen_default_speed_factor()
+        )
 
-        segment_audios: List[np.ndarray] = []
-        target_output_sr = get_audio_sample_rate()
-
-        for idx, seg in enumerate(segments):
-            segment_request = request.copy()
-            segment_request.text = seg["text"]
-            segment_request.predefined_voice_id = seg["voice_id"]
-
-            processed_input_text = _prepare_text_for_request(seg["text"], segment_request)
-            audio_prompt_path_for_engine = _resolve_predefined_voice_path(
-                seg["voice_id"]
-            )
-            segment_audio_np, segment_sr = _synthesize_processed_text(
-                processed_input_text,
-                segment_request,
-                audio_prompt_path_for_engine=audio_prompt_path_for_engine,
-                perf_monitor=perf_monitor,
-            )
-            if segment_sr != target_output_sr:
-                segment_audio_np = librosa.resample(
-                    segment_audio_np, orig_sr=segment_sr, target_sr=target_output_sr
-                )
-                segment_sr = target_output_sr
-            segment_audios.append(segment_audio_np.astype(np.float32, copy=False))
-
-            insert_pause_between_segments = (
-                True
-                if request.multi_voice_insert_pause_between_segments is None
-                else request.multi_voice_insert_pause_between_segments
-            )
-            if idx < len(segments) - 1 and insert_pause_between_segments:
-                pause_seconds = _clamp_value(
-                    request.multi_voice_pause_seconds
-                    if request.multi_voice_pause_seconds is not None
-                    else 0.25,
-                    0.0,
-                    2.0,
-                )
-                if pause_seconds > 0:
-                    pause_samples = int(pause_seconds * target_output_sr)
-                    segment_audios.append(np.zeros(pause_samples, dtype=np.float32))
-
-        final_audio_np = np.concatenate(segment_audios)
-        engine_output_sample_rate = target_output_sr
-    else:
-        processed_input_text = _prepare_text_for_request(request.text, request)
-
-        audio_prompt_path_for_engine: Optional[Path] = None
-        if request.voice_mode == "predefined":
-            if not request.predefined_voice_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Missing 'predefined_voice_id' for 'predefined' voice mode.",
-                )
-            audio_prompt_path_for_engine = _resolve_predefined_voice_path(
-                request.predefined_voice_id
-            )
-            logger.info(f"Using predefined voice: {request.predefined_voice_id}")
-        elif request.voice_mode == "clone":
-            if not request.reference_audio_filename:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Missing 'reference_audio_filename' for 'clone' voice mode.",
-                )
-            ref_dir = get_reference_audio_path(ensure_absolute=True)
-            potential_path = ref_dir / request.reference_audio_filename
-            if not potential_path.is_file():
-                logger.error(
-                    f"Reference audio file for cloning not found: {potential_path}"
-                )
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Reference audio file '{request.reference_audio_filename}' not found.",
-                )
-            max_dur = config_manager.get_int("audio_output.max_reference_duration_sec", 30)
-            is_valid, msg = utils.validate_reference_audio(potential_path, max_dur)
-            if not is_valid:
-                raise HTTPException(
-                    status_code=400, detail=f"Invalid reference audio: {msg}"
-                )
-            audio_prompt_path_for_engine = potential_path
-            logger.info(
-                f"Using reference audio for cloning: {request.reference_audio_filename}"
-            )
-
-        perf_monitor.record("Parameters and voice path resolved")
-
-        final_audio_np, engine_output_sample_rate = _synthesize_processed_text(
+        processed_input_text = auto_pauses.insert_auto_pauses(
             processed_input_text,
-            request,
-            audio_prompt_path_for_engine=audio_prompt_path_for_engine,
-            perf_monitor=perf_monitor,
+            pause_style,
+            speed_factor=speed_factor_for_pauses,
+            strength=pause_strength,
+            topup_only=pause_topup_only,
+            min_pause=pause_min,
+            max_pause=pause_max,
+        )
+
+    audio_prompt_path_for_engine: Optional[Path] = None
+    if request.voice_mode == "predefined":
+        if not request.predefined_voice_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'predefined_voice_id' for 'predefined' voice mode.",
+            )
+        voices_dir = get_predefined_voices_path(ensure_absolute=True)
+        potential_path = voices_dir / request.predefined_voice_id
+        if not potential_path.is_file():
+            logger.error(f"Predefined voice file not found: {potential_path}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Predefined voice file '{request.predefined_voice_id}' not found.",
+            )
+        audio_prompt_path_for_engine = potential_path
+        logger.info(f"Using predefined voice: {request.predefined_voice_id}")
+
+    elif request.voice_mode == "clone":
+        if not request.reference_audio_filename:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'reference_audio_filename' for 'clone' voice mode.",
+            )
+        ref_dir = get_reference_audio_path(ensure_absolute=True)
+        potential_path = ref_dir / request.reference_audio_filename
+        if not potential_path.is_file():
+            logger.error(
+                f"Reference audio file for cloning not found: {potential_path}"
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Reference audio file '{request.reference_audio_filename}' not found.",
+            )
+        max_dur = config_manager.get_int("audio_output.max_reference_duration_sec", 30)
+        is_valid, msg = utils.validate_reference_audio(potential_path, max_dur)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid reference audio: {msg}"
+            )
+        audio_prompt_path_for_engine = potential_path
+        logger.info(
+            f"Using reference audio for cloning: {request.reference_audio_filename}"
+        )
+
+    perf_monitor.record("Parameters and voice path resolved")
+
+    all_audio_segments_np: List[np.ndarray] = []
+    final_output_sample_rate = (
+        get_audio_sample_rate()
+    )  # Target SR for the final output file
+    engine_output_sample_rate: Optional[int] = (
+        None  # SR from the TTS engine (e.g., 24000 Hz)
+    )
+
+    effective_split_strategy = (
+        request.split_strategy if request.split_strategy else "basic"
+    )
+
+    if not request.split_text or effective_split_strategy == "off":
+        text_chunks = [processed_input_text]
+        logger.info("Processing text as a single chunk (splitting disabled).")
+    elif effective_split_strategy == "intelligent":
+        speed_factor = (
+            request.speed_factor
+            if request.speed_factor is not None
+            else get_gen_default_speed_factor()
+        )
+        text_chunks = utils.smart_split_text(
+            processed_input_text,
+            target_seconds=(
+                request.smart_target_seconds
+                if request.smart_target_seconds is not None
+                else 15.0
+            ),
+            min_seconds=(
+                request.smart_min_seconds if request.smart_min_seconds is not None else 10.0
+            ),
+            max_seconds=(
+                request.smart_max_seconds if request.smart_max_seconds is not None else 18.0
+            ),
+            base_words_per_second=(
+                request.smart_base_wps if request.smart_base_wps is not None else 2.7
+            ),
+            speed_factor=speed_factor,
+            overlap_sentences=(
+                request.smart_overlap_sentences
+                if request.smart_overlap_sentences is not None
+                else 0
+            ),
+        )
+        perf_monitor.record(f"Text smart-split into {len(text_chunks)} chunks")
+    elif len(processed_input_text) > (
+        request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5
+    ):
+        chunk_size_to_use = (
+            request.chunk_size if request.chunk_size is not None else 120
+        )
+        logger.info(f"Splitting text into chunks of size ~{chunk_size_to_use}.")
+        text_chunks = utils.chunk_text_by_sentences(
+            processed_input_text, chunk_size_to_use
+        )
+        perf_monitor.record(f"Text split into {len(text_chunks)} chunks")
+    else:
+        text_chunks = [processed_input_text]
+        logger.info(
+            "Processing text as a single chunk (splitting not enabled or text too short)."
+        )
+
+    if not text_chunks:
+        raise HTTPException(
+            status_code=400, detail="Text processing resulted in no usable chunks."
+        )
+
+    for i, chunk in enumerate(text_chunks):
+        logger.info(f"Synthesizing chunk {i+1}/{len(text_chunks)}...")
+        try:
+            chunk_audio_tensor, chunk_sr_from_engine = _synthesize_with_pause_support(
+                chunk,
+                audio_prompt_path=(
+                    str(audio_prompt_path_for_engine)
+                    if audio_prompt_path_for_engine
+                    else None
+                ),
+                temperature=(
+                    request.temperature
+                    if request.temperature is not None
+                    else get_gen_default_temperature()
+                ),
+                exaggeration=(
+                    request.exaggeration
+                    if request.exaggeration is not None
+                    else get_gen_default_exaggeration()
+                ),
+                cfg_weight=(
+                    request.cfg_weight
+                    if request.cfg_weight is not None
+                    else get_gen_default_cfg_weight()
+                ),
+                seed=(
+                    request.seed if request.seed is not None else get_gen_default_seed()
+                ),
+            )
+            perf_monitor.record(f"Engine synthesized chunk {i+1}")
+
+            if chunk_audio_tensor is None or chunk_sr_from_engine is None:
+                error_detail = f"TTS engine failed to synthesize audio for chunk {i+1}."
+                logger.error(error_detail)
+                raise HTTPException(status_code=500, detail=error_detail)
+
+            if engine_output_sample_rate is None:
+                engine_output_sample_rate = chunk_sr_from_engine
+            elif engine_output_sample_rate != chunk_sr_from_engine:
+                logger.warning(
+                    f"Inconsistent sample rate from engine: chunk {i+1} ({chunk_sr_from_engine}Hz) "
+                    f"differs from previous ({engine_output_sample_rate}Hz). Using first chunk's SR."
+                )
+
+            current_processed_audio_tensor = chunk_audio_tensor
+
+            speed_factor_to_use = (
+                request.speed_factor
+                if request.speed_factor is not None
+                else get_gen_default_speed_factor()
+            )
+            if speed_factor_to_use != 1.0:
+                current_processed_audio_tensor, _ = utils.apply_speed_factor(
+                    current_processed_audio_tensor,
+                    chunk_sr_from_engine,
+                    speed_factor_to_use,
+                )
+                perf_monitor.record(f"Speed factor applied to chunk {i+1}")
+
+            # ### MODIFICATION ###
+            # All other processing is REMOVED from the loop.
+            # We will process the final concatenated audio clip.
+            processed_audio_np = current_processed_audio_tensor.cpu().numpy().squeeze()
+            all_audio_segments_np.append(processed_audio_np)
+
+        except HTTPException as http_exc:
+            raise http_exc
+        except Exception as e_chunk:
+            error_detail = f"Error processing audio chunk {i+1}: {str(e_chunk)}"
+            logger.error(error_detail, exc_info=True)
+            raise HTTPException(status_code=500, detail=error_detail)
+
+    if not all_audio_segments_np:
+        logger.error("No audio segments were successfully generated.")
+        raise HTTPException(
+            status_code=500, detail="Audio generation resulted in no output."
+        )
+
+    if engine_output_sample_rate is None:
+        logger.error("Engine output sample rate could not be determined.")
+        raise HTTPException(
+            status_code=500, detail="Failed to determine engine sample rate."
+        )
+    try:
+        # ### SMART AUDIO STITCHING ###
+        # Local constants - adjust these values to tune stitching behavior
+        SENTENCE_PAUSE_MS = 200  # Desired audible silence between sentences
+        CROSSFADE_MS = 20  # Crossfade duration for smart mode (10-50ms recommended)
+        SAFETY_FADE_MS = 3  # Minimal edge fade for fallback mode (2-5ms)
+        ENABLE_DC_REMOVAL = False  # Set True if you hear low-frequency thumps
+        DC_HIGHPASS_HZ = 15  # High-pass cutoff for DC removal
+        PEAK_NORMALIZE_THRESHOLD = 0.99  # Normalize if peak exceeds this
+        PEAK_NORMALIZE_TARGET = 0.95  # Target peak after normalization
+
+        # Read smart stitching toggle from config (defaults to True)
+        enable_smart_stitching = config_manager.get_bool(
+            "audio_processing.enable_crossfade", True
+        )
+
+        # --- Sample rate validation ---
+        if not engine_output_sample_rate or engine_output_sample_rate <= 0:
+            logger.error(
+                f"Invalid sample rate: {engine_output_sample_rate}, "
+                "falling back to raw concatenation"
+            )
+            final_audio_np = (
+                np.concatenate(all_audio_segments_np)
+                if len(all_audio_segments_np) > 1
+                else all_audio_segments_np[0]
+            )
+
+        elif len(all_audio_segments_np) == 1:
+            # Single chunk - no stitching needed
+            final_audio_np = all_audio_segments_np[0]
+            logger.info("Single audio chunk - no stitching required")
+
+        elif enable_smart_stitching:
+            # --- Smart mode: true crossfading with silence insertion ---
+            fade_samples = int(CROSSFADE_MS / 1000 * engine_output_sample_rate)
+
+            # Calculate silence buffer with compensation for crossfade overlap
+            # Each crossfade removes fade_samples from silence (one at each end)
+            desired_silence_samples = int(
+                SENTENCE_PAUSE_MS / 1000 * engine_output_sample_rate
+            )
+            silence_buffer_samples = desired_silence_samples + (fade_samples * 2)
+
+            # Preprocess chunks: convert to float32 and optionally remove DC offset
+            chunks = []
+            for chunk in all_audio_segments_np:
+                processed = chunk.astype(np.float32, copy=True)
+                if ENABLE_DC_REMOVAL:
+                    processed = _remove_dc_offset(
+                        processed, engine_output_sample_rate, DC_HIGHPASS_HZ
+                    )
+                chunks.append(processed)
+
+            # Start with first chunk
+            result = chunks[0]
+
+            # Stitch remaining chunks with crossfaded silence gaps
+            for i in range(1, len(chunks)):
+                # Create silence buffer (oversized to compensate for crossfade overlap)
+                silence = np.zeros(silence_buffer_samples, dtype=np.float32)
+
+                # Crossfade: current result → silence (speech fades into silence)
+                result = _crossfade_with_overlap(result, silence, fade_samples)
+
+                # Crossfade: result → next chunk (silence fades into speech)
+                result = _crossfade_with_overlap(result, chunks[i], fade_samples)
+
+            final_audio_np = result
+            logger.info(
+                f"Smart stitching applied: {len(chunks)} chunks, "
+                f"{CROSSFADE_MS}ms crossfades, {SENTENCE_PAUSE_MS}ms pauses"
+            )
+
+        else:
+            # --- Fallback mode: minimal safety edge fades, no silence ---
+            fade_samples = int(SAFETY_FADE_MS / 1000 * engine_output_sample_rate)
+            num_chunks = len(all_audio_segments_np)
+
+            processed_chunks = []
+            for i, chunk in enumerate(all_audio_segments_np):
+                is_first = i == 0
+                is_last = i == num_chunks - 1
+
+                processed = _apply_edge_fades(
+                    chunk,
+                    fade_samples,
+                    fade_in=(not is_first),  # No fade-in on first chunk
+                    fade_out=(not is_last),  # No fade-out on last chunk
+                )
+                processed_chunks.append(processed)
+
+            final_audio_np = np.concatenate(processed_chunks)
+            logger.info(
+                f"Safety edge fades applied: {num_chunks} chunks, "
+                f"{SAFETY_FADE_MS}ms linear fades"
+            )
+
+        # --- Ensure float32 dtype for all code paths ---
+        final_audio_np = final_audio_np.astype(np.float32, copy=False)
+
+        # --- Normalize to prevent clipping ---
+        peak_amplitude = np.abs(final_audio_np).max()
+        if peak_amplitude > PEAK_NORMALIZE_THRESHOLD:
+            final_audio_np = final_audio_np * (PEAK_NORMALIZE_TARGET / peak_amplitude)
+            logger.warning(
+                f"Audio normalized to prevent clipping (peak was {peak_amplitude:.3f})"
+            )
+
+        perf_monitor.record("Audio chunks stitched")
+
+        # --- Global Audio Post-Processing (applied to complete stitched audio) ---
+        if config_manager.get_bool("audio_processing.enable_silence_trimming", False):
+            final_audio_np = utils.trim_lead_trail_silence(
+                final_audio_np, engine_output_sample_rate
+            )
+            perf_monitor.record("Global silence trim applied")
+
+        if config_manager.get_bool(
+            "audio_processing.enable_internal_silence_fix", False
+        ):
+            final_audio_np = utils.fix_internal_silence(
+                final_audio_np, engine_output_sample_rate
+            )
+            perf_monitor.record("Global internal silence fix applied")
+
+        if (
+            config_manager.get_bool("audio_processing.enable_unvoiced_removal", False)
+            and utils.PARSELMOUTH_AVAILABLE
+        ):
+            final_audio_np = utils.remove_long_unvoiced_segments(
+                final_audio_np, engine_output_sample_rate
+            )
+            perf_monitor.record("Global unvoiced removal applied")
+
+        # --- Warn about potentially conflicting settings ---
+        if enable_smart_stitching and config_manager.get_bool(
+            "audio_processing.enable_silence_trimming", False
+        ):
+            logger.warning(
+                "Smart stitching adds sentence pauses, but silence trimming is enabled. "
+                "Leading/trailing pauses may be removed."
+            )
+        # ### SMART AUDIO STITCHING END ###
+
+    except ValueError as e_concat:
+        logger.error(f"Audio concatenation/stitching failed: {e_concat}", exc_info=True)
+        for idx, seg in enumerate(all_audio_segments_np):
+            logger.error(f"Segment {idx} shape: {seg.shape}, dtype: {seg.dtype}")
+        raise HTTPException(
+            status_code=500, detail=f"Audio stitching error: {e_concat}"
         )
 
     output_format_str = (
