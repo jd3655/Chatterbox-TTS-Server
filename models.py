@@ -152,6 +152,21 @@ class CustomTTSRequest(BaseModel):
         True,
         description="If true, keeps auto pauses conservative to avoid over-pausing.",
     )
+    normalize_currency: Optional[bool] = Field(
+        False, description="Normalize USD currency amounts into spoken words."
+    )
+    currency_style: Optional[str] = Field(
+        "us_spoken",
+        description="Style identifier for currency normalization. Currently only 'us_spoken' is supported.",
+    )
+    currency_max_value: Optional[int] = Field(
+        999_999_999,
+        description="Maximum allowed whole-dollar value for normalization. Larger values are left unchanged.",
+    )
+    currency_keep_symbol: Optional[bool] = Field(
+        False,
+        description="Reserved for future use to keep currency symbols alongside normalized text.",
+    )
 
     pronunciation_dict: Optional[dict] = Field(
         None,

@@ -7,6 +7,7 @@ import os
 import io
 import logging
 import logging.handlers  # For RotatingFileHandler
+import re
 import shutil
 import time
 import uuid
@@ -70,6 +71,7 @@ from models import (  # Pydantic models
 )
 import utils  # Utility functions
 import auto_pauses  # Auto pause insertion
+import text_normalization
 
 from pydantic import BaseModel, Field
 
@@ -108,6 +110,21 @@ class OpenAISpeechRequest(BaseModel):
     pause_topup_only: Optional[bool] = Field(
         True,
         description="If true, keeps auto pauses conservative to avoid over-pausing.",
+    )
+    normalize_currency: Optional[bool] = Field(
+        False, description="Normalize USD currency amounts into spoken words."
+    )
+    currency_style: Optional[str] = Field(
+        "us_spoken",
+        description="Style identifier for currency normalization. Currently only 'us_spoken' is supported.",
+    )
+    currency_max_value: Optional[int] = Field(
+        999_999_999,
+        description="Maximum allowed whole-dollar value for normalization. Larger values are left unchanged.",
+    )
+    currency_keep_symbol: Optional[bool] = Field(
+        False,
+        description="Reserved for future use to keep currency symbols alongside normalized text.",
     )
     pronunciation_dict: Optional[Dict[str, str]] = Field(
         None,
@@ -1000,6 +1017,19 @@ async def custom_tts_endpoint(
     logger.debug(f"Input text (first 100 chars): '{request.text[:100]}...'")
 
     try:
+        normalized_currency_text = text_normalization.normalize_text(
+            request.text,
+            normalize_currency=request.normalize_currency,
+            currency_max_value=(
+                request.currency_max_value
+                if request.currency_max_value is not None
+                else 999_999_999
+            ),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
         merged_pronunciation_dict = _resolve_pronunciation_dict(
             request.pronunciation_dict, request.pronunciation_dict_mode
         )
@@ -1008,7 +1038,7 @@ async def custom_tts_endpoint(
 
     try:
         pronunciation_applied_text = apply_pronunciation_dict(
-            request.text, merged_pronunciation_dict
+            normalized_currency_text, merged_pronunciation_dict
         )
         normalized_input_text = utils.normalize_pause_tags(pronunciation_applied_text)
     except ValueError as e:
@@ -1496,11 +1526,20 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
 
     try:
         try:
+            normalized_currency_text = text_normalization.normalize_text(
+                request.input_,
+                normalize_currency=request.normalize_currency,
+                currency_max_value=(
+                    request.currency_max_value
+                    if request.currency_max_value is not None
+                    else 999_999_999
+                ),
+            )
             merged_pronunciation_dict = _resolve_pronunciation_dict(
                 request.pronunciation_dict, request.pronunciation_dict_mode
             )
             pronunciation_applied = apply_pronunciation_dict(
-                request.input_, merged_pronunciation_dict
+                normalized_currency_text, merged_pronunciation_dict
             )
             normalized_text = utils.normalize_pause_tags(pronunciation_applied)
         except ValueError as e:

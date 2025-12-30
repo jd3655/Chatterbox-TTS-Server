@@ -841,6 +841,7 @@ The most intuitive way to use the server:
     *   `Voice Cloning`: Select an uploaded reference file from `./reference_audio`.
 *   **Presets:** Load examples from `ui/presets.yaml`. New presets demonstrate Turbo's paralinguistic tags.
 *   **Reference/Predefined Audio Management:** Import new files and refresh lists.
+*   **Text Normalization:** Optional toggle to expand `$` amounts into spoken words (e.g., `$657.62` → “six hundred, fifty seven dollars and sixty two cents”). Default **off**. Special handling for cents-only values (e.g., `$0.05` → “five cents”), and bracketed tags like `[laugh]` remain untouched.
 *   **Generation Parameters:** Adjust Temperature, Exaggeration, CFG Weight, Speed Factor, Seed. Save defaults to `config.yaml`.
 *   **Chunking Controls:** Toggle "Split text into chunks" and adjust "Chunk Size" for long texts.
 *   **Server Configuration:** View/edit parts of `config.yaml` (requires server restart for some changes).
@@ -883,6 +884,8 @@ The primary endpoint for TTS generation is `/tts`, which offers detailed control
         *   `chunk_size` (integer, default 120): Target characters per chunk for **Basic** splitting.
         *   `smart_target_seconds`, `smart_min_seconds`, `smart_max_seconds`, `smart_base_wps`, `smart_overlap_sentences`: Intelligent split controls (default 15s target, 10–18s bounds, 2.7 base wps, 0 overlap). `speed_factor` influences timing estimates automatically.
         *   `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`: Generation parameters overriding defaults.
+        *   `normalize_currency` (boolean, default `false`): Expand `$` amounts to spoken USD words before other preprocessing. Preserves bracketed tags.
+        *   `currency_style` (string, default `"us_spoken"`), `currency_max_value` (int, default `999999999`), `currency_keep_symbol` (boolean, default `false`): Future-friendly currency options. Values over `currency_max_value` remain unchanged.
     *   **Response:** Streaming audio (`audio/wav` or `audio/opus`).
 *   **`/v1/audio/speech` (POST):** OpenAI-compatible.
     *   `input`: Text.

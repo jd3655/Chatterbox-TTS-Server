@@ -91,6 +91,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     const pauseStrengthValue = document.getElementById('pause-strength-value');
     const pauseMaxSecondsInput = document.getElementById('pause-max-seconds');
     const pauseTopupOnlyCheckbox = document.getElementById('pause-topup-only');
+    const normalizeCurrencyToggle = document.getElementById('normalize-currency-toggle');
     const serverConfigForm = document.getElementById('server-config-form');
     const saveConfigBtn = document.getElementById('save-config-btn');
     const restartServerBtn = document.getElementById('restart-server-btn');
@@ -268,6 +269,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             last_pause_min_seconds: currentUiState.last_pause_min_seconds !== undefined ? currentUiState.last_pause_min_seconds : 0.04,
             last_pause_topup_only: pauseTopupOnlyCheckbox ? pauseTopupOnlyCheckbox.checked : true,
             last_pronunciation_dict: getPronunciationDictFromUI(false),
+            last_normalize_currency: normalizeCurrencyToggle ? normalizeCurrencyToggle.checked : false,
         };
 
         try {
@@ -652,6 +654,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (pauseMaxSecondsInput) pauseMaxSecondsInput.value = currentUiState.last_pause_max_seconds !== undefined ? currentUiState.last_pause_max_seconds : 1.8;
         if (pauseTopupOnlyCheckbox) pauseTopupOnlyCheckbox.checked = currentUiState.last_pause_topup_only !== undefined ? currentUiState.last_pause_topup_only : true;
         toggleAutoPauseControls();
+        const normalizeCurrencyEnabled = currentUiState.last_normalize_currency ?? false;
+        if (normalizeCurrencyToggle) normalizeCurrencyToggle.checked = normalizeCurrencyEnabled;
 
         if (hideChunkWarningCheckbox) hideChunkWarningCheckbox.checked = hideChunkWarning;
         if (hideGenerationWarningCheckbox) hideGenerationWarningCheckbox.checked = hideGenerationWarning;
@@ -853,6 +857,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
         if (pauseMaxSecondsInput) pauseMaxSecondsInput.addEventListener('change', debouncedSaveState);
         if (pauseTopupOnlyCheckbox) pauseTopupOnlyCheckbox.addEventListener('change', debouncedSaveState);
+        if (normalizeCurrencyToggle) normalizeCurrencyToggle.addEventListener('change', debouncedSaveState);
         if (pronunciationTableBody) pronunciationTableBody.addEventListener('input', debouncedSaveState);
         if (pronunciationAddRowBtn) pronunciationAddRowBtn.addEventListener('click', () => { addPronunciationRow(); debouncedSaveState(); });
         if (pronunciationSaveBtn) pronunciationSaveBtn.addEventListener('click', savePronunciationDictionary);
@@ -1200,6 +1205,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             jsonData.pause_topup_only = pauseTopupOnlyCheckbox ? pauseTopupOnlyCheckbox.checked : true;
             jsonData.pause_min_seconds = currentUiState.last_pause_min_seconds !== undefined ? currentUiState.last_pause_min_seconds : 0.04;
         }
+        jsonData.normalize_currency = normalizeCurrencyToggle ? normalizeCurrencyToggle.checked : false;
+        jsonData.currency_style = 'us_spoken';
+        jsonData.currency_max_value = 999999999;
+        jsonData.currency_keep_symbol = false;
         if (currentVoiceMode === 'predefined' && predefinedVoiceSelect.value !== 'none') {
             jsonData.predefined_voice_id = predefinedVoiceSelect.value;
         } else if (currentVoiceMode === 'clone' && cloneReferenceSelect.value !== 'none') {

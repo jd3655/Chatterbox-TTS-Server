@@ -72,6 +72,7 @@ ui_state:
   last_pause_max_seconds: 1.8
   last_pause_min_seconds: 0.04
   last_pause_topup_only: true
+  last_normalize_currency: false
 ui:
   title: Chatterbox TTS Server
   show_language_select: true
