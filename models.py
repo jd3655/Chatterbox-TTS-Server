@@ -1,7 +1,7 @@
 # File: models.py
 # Pydantic models for API request and response validation.
 
-from typing import Optional, Literal
+from typing import Optional, Literal, List, Dict
 from pydantic import BaseModel, Field
 
 
@@ -175,6 +175,37 @@ class CustomTTSRequest(BaseModel):
     pronunciation_dict_mode: Optional[Literal["merge", "replace"]] = Field(
         "merge",
         description="How to combine request dictionary with the configured dictionary.",
+    )
+
+    # Multi-voice controls
+    multi_voice: Optional[bool] = Field(
+        False, description="Enable multi-voice synthesis for a single output file."
+    )
+    multi_voice_mode: Optional[Literal["paragraphs", "directives"]] = Field(
+        "paragraphs",
+        description="Multi-voice parsing mode: paragraph assignments or inline directives.",
+    )
+    multi_voice_default_voice: Optional[str] = Field(
+        None,
+        description="Default voice ID to use when assignments are missing.",
+    )
+    multi_voice_assignments: Optional[List[str]] = Field(
+        None,
+        description="Ordered list of voice IDs to map onto paragraphs when using paragraph mode.",
+    )
+    multi_voice_segments: Optional[List[Dict[str, str]]] = Field(
+        None,
+        description="Explicit voice/text segments; bypasses parsing when provided.",
+    )
+    multi_voice_insert_pause_between_segments: Optional[bool] = Field(
+        True,
+        description="Insert a pause between multi-voice segments before stitching.",
+    )
+    multi_voice_pause_seconds: Optional[float] = Field(
+        0.25,
+        ge=0.0,
+        le=2.0,
+        description="Seconds of silence inserted between segments (0.0–2.0).",
     )
 
     pronunciation_dict: Optional[dict] = Field(

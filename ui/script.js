@@ -66,6 +66,18 @@ document.addEventListener('DOMContentLoaded', async function () {
     const cloneImportButton = document.getElementById('clone-import-button');
     const cloneRefreshButton = document.getElementById('clone-refresh-button');
     const cloneFileInput = document.getElementById('clone-file-input');
+    const multiVoiceToggle = document.getElementById('multi-voice-toggle');
+    const multiVoiceControls = document.getElementById('multi-voice-controls');
+    const multiVoiceModeRadios = document.querySelectorAll('input[name="multi_voice_mode"]');
+    const multiVoiceParagraphsContainer = document.getElementById('multi-voice-paragraphs');
+    const multiVoiceDetectBtn = document.getElementById('multi-voice-detect');
+    const multiVoiceAlternateBtn = document.getElementById('multi-voice-alternate');
+    const multiVoiceDirectivePanel = document.getElementById('multi-voice-directive-panel');
+    const multiVoiceParagraphPanel = document.getElementById('multi-voice-paragraph-panel');
+    const multiVoicePauseToggle = document.getElementById('multi-voice-pause-toggle');
+    const multiVoicePauseControls = document.getElementById('multi-voice-pause-controls');
+    const multiVoicePauseSeconds = document.getElementById('multi-voice-pause-seconds');
+    const multiVoicePauseValue = document.getElementById('multi-voice-pause-value');
     const presetsContainer = document.getElementById('presets-container');
     const presetsPlaceholder = document.getElementById('presets-placeholder');
     const temperatureSlider = document.getElementById('temperature');
@@ -227,6 +239,75 @@ document.addEventListener('DOMContentLoaded', async function () {
         localStorage.setItem('uiTheme', theme);
     }
 
+    function getCurrentParagraphs() {
+        const text = textArea ? textArea.value : '';
+        return text.split(/\n\s*\n+/).map(p => p.trim()).filter(Boolean);
+    }
+
+    function buildMultiVoiceRows(paragraphs, assignments) {
+        if (!multiVoiceParagraphsContainer) return;
+        multiVoiceParagraphsContainer.innerHTML = '';
+        const voiceOptions = predefinedVoiceSelect ? Array.from(predefinedVoiceSelect.options).filter(opt => opt.value !== 'none') : [];
+        paragraphs.forEach((para, idx) => {
+            const row = document.createElement('div');
+            row.className = 'multi-voice-row';
+            const label = document.createElement('label');
+            label.textContent = `Paragraph ${idx + 1}`;
+            const select = document.createElement('select');
+            select.className = 'form-select';
+            select.dataset.paragraphIndex = String(idx);
+            voiceOptions.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt.value;
+                option.textContent = opt.textContent;
+                select.appendChild(option);
+            });
+            const assigned = assignments && assignments[idx] ? assignments[idx] : (predefinedVoiceSelect ? predefinedVoiceSelect.value : '');
+            if (assigned) select.value = assigned;
+            row.appendChild(label);
+            row.appendChild(select);
+            multiVoiceParagraphsContainer.appendChild(row);
+        });
+    }
+
+    function updateMultiVoiceModeVisibility() {
+        if (!multiVoiceDirectivePanel || !multiVoiceParagraphPanel) return;
+        const mode = document.querySelector('input[name="multi_voice_mode"]:checked')?.value || 'paragraphs';
+        multiVoiceDirectivePanel.classList.toggle('hidden', mode !== 'directives');
+        multiVoiceParagraphPanel.classList.toggle('hidden', mode !== 'paragraphs');
+    }
+
+    function toggleMultiVoicePauseControls() {
+        if (!multiVoicePauseControls || !multiVoicePauseToggle) return;
+        const enabled = multiVoicePauseToggle.checked;
+        multiVoicePauseControls.classList.toggle('hidden', !enabled);
+    }
+
+    function toggleMultiVoiceUI() {
+        if (!multiVoiceControls || !multiVoiceToggle) return;
+        multiVoiceControls.classList.toggle('hidden', !multiVoiceToggle.checked);
+    }
+
+    function setMultiVoicePauseValueDisplay() {
+        if (multiVoicePauseValue && multiVoicePauseSeconds) {
+            multiVoicePauseValue.textContent = `${parseFloat(multiVoicePauseSeconds.value).toFixed(2)}s`;
+        }
+    }
+
+    function applyAlternateVoices() {
+        if (!multiVoiceParagraphsContainer || !predefinedVoiceSelect) return;
+        const options = Array.from(predefinedVoiceSelect.options).filter(opt => opt.value !== 'none');
+        if (options.length < 2) {
+            showNotification('Add at least two voices to alternate.', 'warning');
+            return;
+        }
+        const voices = [options[0].value, options[1].value];
+        const selects = multiVoiceParagraphsContainer.querySelectorAll('select');
+        selects.forEach((select, idx) => {
+            select.value = voices[idx % voices.length];
+        });
+    }
+
     if (themeToggleButton) {
         themeToggleButton.addEventListener('click', () => {
             const newTheme = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
@@ -270,6 +351,11 @@ document.addEventListener('DOMContentLoaded', async function () {
             last_pause_topup_only: pauseTopupOnlyCheckbox ? pauseTopupOnlyCheckbox.checked : true,
             last_pronunciation_dict: getPronunciationDictFromUI(false),
             last_normalize_currency: normalizeCurrencyToggle ? normalizeCurrencyToggle.checked : false,
+            last_multi_voice_enabled: multiVoiceToggle ? multiVoiceToggle.checked : false,
+            last_multi_voice_mode: document.querySelector('input[name="multi_voice_mode"]:checked')?.value || 'paragraphs',
+            last_multi_voice_assignments: getParagraphVoiceAssignments(),
+            last_multi_voice_insert_pause: multiVoicePauseToggle ? multiVoicePauseToggle.checked : true,
+            last_multi_voice_pause_seconds: multiVoicePauseSeconds ? parseFloat(multiVoicePauseSeconds.value) : 0.25,
         };
 
         try {
@@ -306,6 +392,11 @@ document.addEventListener('DOMContentLoaded', async function () {
                 speedFactorWarningSpan.classList.add('hidden');
             }
         }
+    }
+
+    function getParagraphVoiceAssignments() {
+        if (!multiVoiceParagraphsContainer || !multiVoiceToggle || !multiVoiceToggle.checked) return [];
+        return Array.from(multiVoiceParagraphsContainer.querySelectorAll('select')).map(sel => sel.value);
     }
 
     // --- Model Management Functions (New Features) ---
@@ -660,6 +751,23 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (hideChunkWarningCheckbox) hideChunkWarningCheckbox.checked = hideChunkWarning;
         if (hideGenerationWarningCheckbox) hideGenerationWarningCheckbox.checked = hideGenerationWarning;
 
+        // Multi-voice state restore
+        if (multiVoiceToggle) multiVoiceToggle.checked = currentUiState.last_multi_voice_enabled ?? false;
+        toggleMultiVoiceUI();
+        const savedMode = currentUiState.last_multi_voice_mode || 'paragraphs';
+        const modeRadio = document.querySelector(`input[name="multi_voice_mode"][value="${savedMode}"]`);
+        if (modeRadio) modeRadio.checked = true;
+        updateMultiVoiceModeVisibility();
+        const savedPauseToggle = currentUiState.last_multi_voice_insert_pause ?? true;
+        if (multiVoicePauseToggle) multiVoicePauseToggle.checked = savedPauseToggle;
+        toggleMultiVoicePauseControls();
+        if (multiVoicePauseSeconds) {
+            multiVoicePauseSeconds.value = currentUiState.last_multi_voice_pause_seconds !== undefined ? currentUiState.last_multi_voice_pause_seconds : 0.25;
+            setMultiVoicePauseValueDisplay();
+        }
+        const paragraphs = getCurrentParagraphs();
+        buildMultiVoiceRows(paragraphs, currentUiState.last_multi_voice_assignments || []);
+
         // --- PRESET RESTORATION LOGIC ---
 
         // 1. Restore the name from state variable
@@ -861,6 +969,18 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (pronunciationTableBody) pronunciationTableBody.addEventListener('input', debouncedSaveState);
         if (pronunciationAddRowBtn) pronunciationAddRowBtn.addEventListener('click', () => { addPronunciationRow(); debouncedSaveState(); });
         if (pronunciationSaveBtn) pronunciationSaveBtn.addEventListener('click', savePronunciationDictionary);
+        if (multiVoiceToggle) multiVoiceToggle.addEventListener('change', () => { toggleMultiVoiceUI(); debouncedSaveState(); });
+        multiVoiceModeRadios.forEach(radio => radio.addEventListener('change', () => { updateMultiVoiceModeVisibility(); debouncedSaveState(); }));
+        if (multiVoiceDetectBtn) multiVoiceDetectBtn.addEventListener('click', () => { buildMultiVoiceRows(getCurrentParagraphs(), getParagraphVoiceAssignments()); debouncedSaveState(); });
+        if (multiVoiceAlternateBtn) multiVoiceAlternateBtn.addEventListener('click', () => { applyAlternateVoices(); debouncedSaveState(); });
+        if (multiVoicePauseToggle) multiVoicePauseToggle.addEventListener('change', () => { toggleMultiVoicePauseControls(); debouncedSaveState(); });
+        if (multiVoicePauseSeconds) {
+            multiVoicePauseSeconds.addEventListener('input', () => { setMultiVoicePauseValueDisplay(); });
+            multiVoicePauseSeconds.addEventListener('change', debouncedSaveState);
+        }
+        if (multiVoiceParagraphsContainer) {
+            multiVoiceParagraphsContainer.addEventListener('change', debouncedSaveState);
+        }
 
         // NEW: Model management listeners
         if (modelSelect) {
@@ -903,6 +1023,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             predefinedVoiceSelect.value = defaultFromConfig;
         } else {
             predefinedVoiceSelect.value = 'none';
+        }
+
+        if (multiVoiceParagraphsContainer && multiVoiceToggle && multiVoiceToggle.checked) {
+            buildMultiVoiceRows(getCurrentParagraphs(), currentUiState.last_multi_voice_assignments || []);
         }
     }
 
@@ -1213,6 +1337,15 @@ document.addEventListener('DOMContentLoaded', async function () {
             jsonData.predefined_voice_id = predefinedVoiceSelect.value;
         } else if (currentVoiceMode === 'clone' && cloneReferenceSelect.value !== 'none') {
             jsonData.reference_audio_filename = cloneReferenceSelect.value;
+        }
+        const multiVoiceEnabled = multiVoiceToggle ? multiVoiceToggle.checked : false;
+        jsonData.multi_voice = multiVoiceEnabled;
+        if (multiVoiceEnabled) {
+            jsonData.multi_voice_mode = document.querySelector('input[name="multi_voice_mode"]:checked')?.value || 'paragraphs';
+            jsonData.multi_voice_default_voice = predefinedVoiceSelect && predefinedVoiceSelect.value !== 'none' ? predefinedVoiceSelect.value : undefined;
+            jsonData.multi_voice_assignments = getParagraphVoiceAssignments();
+            jsonData.multi_voice_insert_pause_between_segments = multiVoicePauseToggle ? multiVoicePauseToggle.checked : true;
+            jsonData.multi_voice_pause_seconds = multiVoicePauseSeconds ? parseFloat(multiVoicePauseSeconds.value) : 0.25;
         }
         try {
             const pronunciationDict = getPronunciationDictFromUI(true);
