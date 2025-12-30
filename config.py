@@ -108,6 +108,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "last_pause_min_seconds": 0.04,  # Last used floor for auto pauses.
         "last_pause_topup_only": True,  # Whether auto pauses were in top-up mode.
         "last_pronunciation_dict": {},  # Last pronunciation dictionary rows edited in UI.
+        "last_normalize_currency": False,  # Whether currency normalization was enabled.
     },
     "ui": {  # General UI display settings.
         "title": "Chatterbox TTS Server",  # Title displayed in the web UI.

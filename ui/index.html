@@ -195,6 +195,20 @@
                             </p>
 
                             <div class="form-group">
+                                <label class="form-label mb-2">Text Normalization</label>
+                                <div class="flex-row items-center gap-3">
+                                    <input type="checkbox" id="normalize-currency-toggle" class="form-checkbox">
+                                    <span>Normalize currency ($...)</span>
+                                </div>
+                                <p class="form-hint mt-2">
+                                    Converts $ amounts to spoken words without touching bracketed tags.<br>
+                                    $657.62 → six hundred, fifty seven dollars and sixty two cents<br>
+                                    $15,348.92 → fifteen thousand, three hundred, forty eight dollars and ninety two cents<br>
+                                    $0.05 → five cents
+                                </p>
+                            </div>
+
+                            <div class="form-group">
                                 <div class="flex-row items-center gap-3">
                                     <label for="auto-pauses-toggle" class="form-label mb-0">Auto Pauses</label>
                                     <input type="checkbox" id="auto-pauses-toggle" class="form-checkbox">
