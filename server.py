@@ -58,7 +58,9 @@ from config import (
     get_audio_sample_rate,
     get_full_config_for_template,
     get_audio_output_format,
+    get_pronunciation_dict,
 )
+from pronunciation import apply_pronunciation_dict
 
 import engine  # TTS Engine interface
 from models import (  # Pydantic models
@@ -106,6 +108,22 @@ class OpenAISpeechRequest(BaseModel):
     pause_topup_only: Optional[bool] = Field(
         True,
         description="If true, keeps auto pauses conservative to avoid over-pausing.",
+    )
+    pronunciation_dict: Optional[Dict[str, str]] = Field(
+        None,
+        description="Per-request pronunciation dictionary to enforce whole-word replacements.",
+    )
+    pronunciation_dict_mode: Optional[Literal["merge", "replace"]] = Field(
+        "merge",
+        description="How to combine request dictionary with the configured dictionary.",
+    )
+    pronunciation_dict: Optional[Dict[str, str]] = Field(
+        None,
+        description="Per-request pronunciation dictionary to enforce whole-word replacements.",
+    )
+    pronunciation_dict_mode: Optional[Literal["merge", "replace"]] = Field(
+        "merge",
+        description="How to combine request dictionary with the configured dictionary.",
     )
 
 
@@ -382,6 +400,36 @@ def _clamp_value(value: float, min_value: float, max_value: float) -> float:
     return max(min_value, min(max_value, value))
 
 
+def _validate_pronunciation_dict(mapping: Optional[Dict[str, str]]) -> Dict[str, str]:
+    if mapping is None:
+        return {}
+    if not isinstance(mapping, dict):
+        raise ValueError("Pronunciation dictionary must be an object mapping words to replacements.")
+    validated: Dict[str, str] = {}
+    for key, value in mapping.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError("Pronunciation dictionary keys and values must be strings.")
+        if re.search(r"\s", key):
+            raise ValueError("Pronunciation dictionary keys must be single words (no spaces).")
+        validated[key] = value
+    return validated
+
+
+def _resolve_pronunciation_dict(
+    request_mapping: Optional[Dict[str, str]], mode: Optional[str]
+) -> Dict[str, str]:
+    base = _validate_pronunciation_dict(get_pronunciation_dict())
+    request_validated = _validate_pronunciation_dict(request_mapping)
+    mode_value = (mode or "merge").lower()
+    if mode_value not in {"merge", "replace"}:
+        raise ValueError("Invalid pronunciation_dict_mode. Use 'merge' or 'replace'.")
+    if mode_value == "replace":
+        return request_validated
+    merged = base.copy()
+    merged.update(request_validated)
+    return merged
+
+
 def _synthesize_with_pause_support(
     text: str,
     *,
@@ -593,6 +641,14 @@ async def save_settings_endpoint(request: Request):
         if not isinstance(partial_update, dict):
             raise ValueError("Request body must be a JSON object for /save_settings.")
         logger.debug(f"Received partial config data to save: {partial_update}")
+
+        if "pronunciation_dict" in partial_update:
+            try:
+                partial_update["pronunciation_dict"] = _validate_pronunciation_dict(
+                    partial_update["pronunciation_dict"]
+                )
+            except ValueError as ve:
+                raise HTTPException(status_code=400, detail=str(ve))
 
         if config_manager.update_and_save(partial_update):
             restart_needed = any(
@@ -944,7 +1000,17 @@ async def custom_tts_endpoint(
     logger.debug(f"Input text (first 100 chars): '{request.text[:100]}...'")
 
     try:
-        normalized_input_text = utils.normalize_pause_tags(request.text)
+        merged_pronunciation_dict = _resolve_pronunciation_dict(
+            request.pronunciation_dict, request.pronunciation_dict_mode
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        pronunciation_applied_text = apply_pronunciation_dict(
+            request.text, merged_pronunciation_dict
+        )
+        normalized_input_text = utils.normalize_pause_tags(pronunciation_applied_text)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -979,7 +1045,7 @@ async def custom_tts_endpoint(
         )
 
         processed_input_text = auto_pauses.insert_auto_pauses(
-            normalized_input_text,
+            processed_input_text,
             pause_style,
             speed_factor=speed_factor_for_pauses,
             strength=pause_strength,
@@ -1430,7 +1496,13 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
 
     try:
         try:
-            normalized_text = utils.normalize_pause_tags(request.input_)
+            merged_pronunciation_dict = _resolve_pronunciation_dict(
+                request.pronunciation_dict, request.pronunciation_dict_mode
+            )
+            pronunciation_applied = apply_pronunciation_dict(
+                request.input_, merged_pronunciation_dict
+            )
+            normalized_text = utils.normalize_pause_tags(pronunciation_applied)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 

@@ -108,6 +108,10 @@ document.addEventListener('DOMContentLoaded', async function () {
     const generationWarningModal = document.getElementById('generation-warning-modal');
     const generationWarningAcknowledgeBtn = document.getElementById('generation-warning-acknowledge');
     const hideGenerationWarningCheckbox = document.getElementById('hide-generation-warning-checkbox');
+    const pronunciationTableBody = document.getElementById('pronunciation-table-body');
+    const pronunciationAddRowBtn = document.getElementById('pronunciation-add-row');
+    const pronunciationSaveBtn = document.getElementById('pronunciation-save-btn');
+    const pronunciationStatus = document.getElementById('pronunciation-status');
 
     // Model-related elements
     const modelIndicator = document.getElementById('model-indicator');
@@ -263,6 +267,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             last_pause_max_seconds: pauseMaxSecondsInput ? parseFloat(pauseMaxSecondsInput.value) : 1.8,
             last_pause_min_seconds: currentUiState.last_pause_min_seconds !== undefined ? currentUiState.last_pause_min_seconds : 0.04,
             last_pause_topup_only: pauseTopupOnlyCheckbox ? pauseTopupOnlyCheckbox.checked : true,
+            last_pronunciation_dict: getPronunciationDictFromUI(false),
         };
 
         try {
@@ -530,6 +535,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         populateReferenceFiles();
         populatePresets();
         displayServerConfiguration();
+        populatePronunciationTable(getInitialPronunciationDict());
         if (languageSelectContainer && currentConfig?.ui?.show_language_select === false) {
             languageSelectContainer.classList.add('hidden');
         }
@@ -675,6 +681,137 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
 
+    // --- Pronunciation Dictionary Helpers ---
+    function getInitialPronunciationDict() {
+        const uiDict = currentUiState.last_pronunciation_dict || {};
+        const configDict = currentConfig.pronunciation_dict || {};
+        return Object.keys(uiDict || {}).length > 0 ? uiDict : configDict;
+    }
+
+    function setPronunciationStatus(message, type = 'info') {
+        if (!pronunciationStatus) return;
+        pronunciationStatus.textContent = message;
+        pronunciationStatus.classList.remove('hidden', 'text-success', 'text-error');
+        if (type === 'success') pronunciationStatus.classList.add('text-success');
+        if (type === 'error') pronunciationStatus.classList.add('text-error');
+    }
+
+    function clearPronunciationStatus() {
+        if (pronunciationStatus) {
+            pronunciationStatus.textContent = '';
+            pronunciationStatus.classList.add('hidden');
+            pronunciationStatus.classList.remove('text-success', 'text-error');
+        }
+    }
+
+    function addPronunciationRow(word = '', replacement = '') {
+        if (!pronunciationTableBody) return;
+        const row = document.createElement('div');
+        row.className = 'pronunciation-table__row';
+
+        const wordInput = document.createElement('input');
+        wordInput.type = 'text';
+        wordInput.className = 'pronunciation-table__input';
+        wordInput.placeholder = 'Word (exact match)';
+        wordInput.value = word;
+
+        const replacementInput = document.createElement('input');
+        replacementInput.type = 'text';
+        replacementInput.className = 'pronunciation-table__input';
+        replacementInput.placeholder = 'Replacement (spoken form)';
+        replacementInput.value = replacement;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn ghost pronunciation-table__remove';
+        removeBtn.innerHTML = '✕';
+        removeBtn.title = 'Remove row';
+        removeBtn.addEventListener('click', () => {
+            row.remove();
+            if (!pronunciationTableBody.querySelector('.pronunciation-table__row')) {
+                addPronunciationRow();
+            }
+            debouncedSaveState();
+        });
+
+        row.appendChild(wordInput);
+        row.appendChild(replacementInput);
+        row.appendChild(removeBtn);
+        pronunciationTableBody.appendChild(row);
+    }
+
+    function populatePronunciationTable(mapping = {}) {
+        if (!pronunciationTableBody) return;
+        pronunciationTableBody.innerHTML = '';
+        const entries = Object.entries(mapping || {});
+        if (entries.length === 0) {
+            addPronunciationRow();
+            return;
+        }
+        entries.forEach(([word, replacement]) => addPronunciationRow(word, replacement));
+    }
+
+    function getPronunciationDictFromUI(validateKeys = true) {
+        const mapping = {};
+        if (!pronunciationTableBody) return mapping;
+        const rows = pronunciationTableBody.querySelectorAll('.pronunciation-table__row');
+        rows.forEach(row => {
+            const inputs = row.querySelectorAll('input');
+            if (inputs.length < 2) return;
+            const word = (inputs[0].value || '').trim();
+            const replacement = inputs[1].value || '';
+            if (!word) return;
+            if (validateKeys && /\s/.test(word)) {
+                throw new Error(`"${word}" contains whitespace. Use single words only.`);
+            }
+            mapping[word] = replacement;
+        });
+        return mapping;
+    }
+
+    async function savePronunciationDictionary() {
+        if (!pronunciationSaveBtn) return;
+        clearPronunciationStatus();
+        let mapping = {};
+        try {
+            mapping = getPronunciationDictFromUI(true);
+        } catch (error) {
+            setPronunciationStatus(error.message, 'error');
+            showNotification(error.message, 'error', 5000);
+            return;
+        }
+
+        pronunciationSaveBtn.disabled = true;
+        setPronunciationStatus('Saving...', 'info');
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/save_settings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pronunciation_dict: mapping,
+                    ui_state: { last_pronunciation_dict: mapping }
+                })
+            });
+            if (!response.ok) {
+                const errorResult = await response.json().catch(() => ({ detail: 'Failed to save' }));
+                throw new Error(errorResult.detail || `Failed to save pronunciation dictionary (status ${response.status})`);
+            }
+            currentConfig.pronunciation_dict = mapping;
+            currentUiState.last_pronunciation_dict = mapping;
+            setPronunciationStatus('Dictionary saved to config.yaml.', 'success');
+            showNotification('Pronunciation dictionary saved.', 'success', 3500);
+        } catch (error) {
+            console.error('Error saving pronunciation dictionary:', error);
+            setPronunciationStatus(error.message || 'Failed to save dictionary.', 'error');
+            showNotification(error.message || 'Failed to save pronunciation dictionary.', 'error', 0);
+        } finally {
+            pronunciationSaveBtn.disabled = false;
+            setTimeout(() => clearPronunciationStatus(), 6000);
+        }
+    }
+
+
     function attachStateSavingListeners() {
         voiceModeRadios.forEach(radio => {
             radio.addEventListener('change', debouncedSaveState);
@@ -716,6 +853,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
         if (pauseMaxSecondsInput) pauseMaxSecondsInput.addEventListener('change', debouncedSaveState);
         if (pauseTopupOnlyCheckbox) pauseTopupOnlyCheckbox.addEventListener('change', debouncedSaveState);
+        if (pronunciationTableBody) pronunciationTableBody.addEventListener('input', debouncedSaveState);
+        if (pronunciationAddRowBtn) pronunciationAddRowBtn.addEventListener('click', () => { addPronunciationRow(); debouncedSaveState(); });
+        if (pronunciationSaveBtn) pronunciationSaveBtn.addEventListener('click', savePronunciationDictionary);
 
         // NEW: Model management listeners
         if (modelSelect) {
@@ -1064,6 +1204,15 @@ document.addEventListener('DOMContentLoaded', async function () {
             jsonData.predefined_voice_id = predefinedVoiceSelect.value;
         } else if (currentVoiceMode === 'clone' && cloneReferenceSelect.value !== 'none') {
             jsonData.reference_audio_filename = cloneReferenceSelect.value;
+        }
+        try {
+            const pronunciationDict = getPronunciationDictFromUI(true);
+            if (Object.keys(pronunciationDict).length > 0) {
+                jsonData.pronunciation_dict = pronunciationDict;
+                jsonData.pronunciation_dict_mode = 'merge';
+            }
+        } catch (error) {
+            throw new Error(error.message || 'Invalid pronunciation dictionary entry.');
         }
         return jsonData;
     }
