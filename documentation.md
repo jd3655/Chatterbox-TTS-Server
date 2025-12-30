@@ -464,6 +464,19 @@ The following table describes the main sections and some key parameters you migh
 |                       | `last_seed`                   | integer       | Last used generation seed in UI.                                                                              | `0`                      |
 |                       | `last_chunk_size`             | integer       | Last used chunk size in UI.                                                                                   | `120`                    |
 |                       | `last_split_text_enabled`     | boolean       | Whether text splitting was last enabled in UI.                                                                | `true`                   |
+|                       | `last_split_strategy`         | string        | Last selected split strategy (`off`, `basic`, or `intelligent`).                                              | `basic`                  |
+|                       | `last_smart_target_seconds`   | float         | Last target seconds for intelligent splitting.                                                                | `15.0`                   |
+|                       | `last_smart_min_seconds`      | float         | Last minimum seconds for intelligent splitting.                                                               | `10.0`                   |
+|                       | `last_smart_max_seconds`      | float         | Last maximum seconds for intelligent splitting.                                                               | `18.0`                   |
+|                       | `last_smart_base_wps`         | float         | Last base words/second value for intelligent splitting.                                                       | `2.7`                    |
+|                       | `last_smart_overlap_sentences`| integer       | Last overlap sentence count for intelligent splitting.                                                        | `0`                      |
+|                       | `last_auto_pauses_enabled`    | boolean       | Whether the Auto Pauses toggle was enabled.                                                                   | `false`                  |
+|                       | `last_pause_style`            | string        | Last selected auto pause style (`audiobook`, `youtube`, `ad`, `dramatic`).                                    | `audiobook`              |
+|                       | `last_pause_strength`         | float         | Last used auto pause strength multiplier.                                                                     | `1.0`                    |
+|                       | `last_pause_max_seconds`      | float         | Last used cap for auto pauses.                                                                                | `1.8`                    |
+|                       | `last_pause_min_seconds`      | float         | Last used floor for auto pauses.                                                                              | `0.04`                   |
+|                       | `last_pause_topup_only`       | boolean       | Whether auto pauses used top-up-only mode.                                                                    | `true`                   |
+|                       | `last_preset_name`            | string/null   | Last applied preset name in the UI.                                                                           | `null`                   |
 |                       | `hide_chunk_warning`          | boolean       | Flag to hide the chunking warning modal.                                                                      | `false`                  |
 |                       | `hide_generation_warning`     | boolean       | Flag to hide the general generation quality notice modal.                                                     | `false`                  |
 |                       | `theme`                       | string        | Default UI theme (`dark` or `light`).                                                                         | `dark`                   |
@@ -647,7 +660,7 @@ An expandable section that displays current server configuration values loaded f
 *   A button (usually in the navigation bar) to switch between light and dark UI themes. The preference is saved in the browser's local storage and also synced to `ui_state.theme` in `config.yaml`.
 
 #### 8.1.9 Session Persistence
-*   The UI attempts to save the last used text, voice mode, selected files, generation parameter values, chunking settings, and theme choice to the `ui_state` section in `config.yaml`. These settings are reloaded when the page is next visited.
+*   The UI attempts to save the last used text, voice mode, selected files, generation parameter values, chunking settings, **auto pause preferences (toggle/style/strength/caps/top-up)**, and theme choice to the `ui_state` section in `config.yaml`. These settings are reloaded when the page is next visited.
 
 ### 8.2 Application Programming Interface (API)
 
@@ -670,6 +683,12 @@ This endpoint is designed to be compatible with the basic OpenAI TTS API structu
     | `response_format` | string  | No       | Desired audio output format. Supported: `"wav"`, `"opus"`.                                                                                                               | `"wav"` (from config) |
     | `speed`           | float   | No       | Playback speed factor (e.g., 0.5 to 2.0). Applied post-generation.                                                                                                       | `1.0`                 |
     | `seed`            | integer | No       | Generation seed for reproducibility. `0` or absent might use default engine randomness.                                                                                  | `0` (from config)     |
+    | `auto_pauses`     | boolean | No       | Enable intelligent auto pause insertion before synthesis.                                                                                                                | `false`               |
+    | `pause_style`     | string  | No       | Auto pause style preset (`audiobook`, `youtube`, `ad`, or `dramatic`) when auto pauses are enabled.                                                                      | `"audiobook"`         |
+    | `pause_strength`  | float   | No       | Multiplier (0.5–2.0) applied to computed auto pauses.                                                                                                                    | `1.0`                 |
+    | `pause_max_seconds` | float | No       | Maximum cap (0.2–3.0 seconds) for auto pauses.                                                                                                                           | `1.8`                 |
+    | `pause_min_seconds` | float | No       | Minimum floor (0.0–0.2 seconds) for auto pauses.                                                                                                                         | `0.04`                |
+    | `pause_topup_only` | boolean | No      | When true, reduces non-paragraph auto pauses to avoid over-pausing.                                                                                                      | `true`                |
 
 *   **Processing Logic (Hypothetical for Chatterbox Server):**
     *   The server would parse the `voice` parameter. It would need to check if the `voice` string matches a filename in the `predefined_voices_path` or `reference_audio_path` to determine if it's a predefined voice or a clone request.
@@ -702,6 +721,14 @@ This is the primary and most flexible endpoint for TTS generation, offering full
     | `seed`                      | integer \| null                  | No          | Overrides default seed.                                                                                       | `generation_defaults.seed`                   |
     | `speed_factor`              | float \| null                    | No          | Overrides default speed factor.                                                                               | `generation_defaults.speed_factor`           |
     | `language`                  | string \| null                   | No          | Overrides default language.                                                                                   | `generation_defaults.language`               |
+    | `auto_pauses`               | boolean \| null                  | No          | Enable intelligent auto pause insertion before synthesis.                                                     | `false`                                      |
+    | `pause_style`               | `"audiobook"` \| `"youtube"` \| `"ad"` \| `"dramatic"` \| null | No          | Style preset for auto pauses when `auto_pauses` is true.                                                      | `"audiobook"`                                |
+    | `pause_strength`            | float \| null                    | No          | Multiplier (0.5–2.0) applied to computed auto pauses.                                                         | `1.0`                                        |
+    | `pause_max_seconds`         | float \| null                    | No          | Maximum cap (0.2–3.0 seconds) for auto pauses.                                                                | `1.8`                                        |
+    | `pause_min_seconds`         | float \| null                    | No          | Minimum floor (0.0–0.2 seconds) for auto pauses.                                                              | `0.04`                                       |
+    | `pause_topup_only`          | boolean \| null                  | No          | When true, reduces non-paragraph auto pauses to avoid double-pausing.                                         | `true`                                       |
+
+    Auto pauses run after manual pause normalization; existing manual tags (e.g., `[1s]` or `[pause:1.0s]`) always win, and the default "top-up only" mode keeps generated pauses conservative to avoid double-pausing.
 
 *   **Response:**
     *   **Success (200 OK):** `StreamingResponse` containing binary audio data (media type `audio/wav` or `audio/opus`) with appropriate `Content-Disposition` headers for download.

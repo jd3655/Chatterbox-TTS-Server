@@ -83,6 +83,14 @@ document.addEventListener('DOMContentLoaded', async function () {
     const outputFormatSelect = document.getElementById('output-format');
     const saveGenDefaultsBtn = document.getElementById('save-gen-defaults-btn');
     const genDefaultsStatus = document.getElementById('gen-defaults-status');
+    const autoPausesToggle = document.getElementById('auto-pauses-toggle');
+    const autoPauseStyleRow = document.getElementById('auto-pause-style-row');
+    const autoPauseStyleSelect = document.getElementById('auto-pause-style');
+    const autoPauseAdvanced = document.getElementById('auto-pause-advanced');
+    const pauseStrengthSlider = document.getElementById('pause-strength');
+    const pauseStrengthValue = document.getElementById('pause-strength-value');
+    const pauseMaxSecondsInput = document.getElementById('pause-max-seconds');
+    const pauseTopupOnlyCheckbox = document.getElementById('pause-topup-only');
     const serverConfigForm = document.getElementById('server-config-form');
     const saveConfigBtn = document.getElementById('save-config-btn');
     const restartServerBtn = document.getElementById('restart-server-btn');
@@ -222,6 +230,13 @@ document.addEventListener('DOMContentLoaded', async function () {
         });
     }
 
+    function toggleAutoPauseControls() {
+        const enabled = autoPausesToggle && autoPausesToggle.checked;
+        [autoPauseStyleRow, autoPauseAdvanced].forEach(el => {
+            if (el) el.classList.toggle('hidden', !enabled);
+        });
+    }
+
     // --- UI State Persistence ---
     async function saveCurrentUiState() {
         const stateToSave = {
@@ -242,6 +257,12 @@ document.addEventListener('DOMContentLoaded', async function () {
             hide_generation_warning: hideGenerationWarning,
             theme: localStorage.getItem('uiTheme') || 'dark',
             last_preset_name: currentPresetName,
+            last_auto_pauses_enabled: autoPausesToggle ? autoPausesToggle.checked : false,
+            last_pause_style: autoPauseStyleSelect ? autoPauseStyleSelect.value : 'audiobook',
+            last_pause_strength: pauseStrengthSlider ? parseFloat(pauseStrengthSlider.value) : 1.0,
+            last_pause_max_seconds: pauseMaxSecondsInput ? parseFloat(pauseMaxSecondsInput.value) : 1.8,
+            last_pause_min_seconds: currentUiState.last_pause_min_seconds !== undefined ? currentUiState.last_pause_min_seconds : 0.04,
+            last_pause_topup_only: pauseTopupOnlyCheckbox ? pauseTopupOnlyCheckbox.checked : true,
         };
 
         try {
@@ -615,6 +636,17 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (languageSelect) languageSelect.value = genDefaults.language || 'en';
         if (outputFormatSelect) outputFormatSelect.value = currentConfig?.audio_output?.format || 'mp3';
 
+        const autoPausesEnabled = currentUiState.last_auto_pauses_enabled ?? false;
+        const pauseMinSeconds = currentUiState.last_pause_min_seconds !== undefined ? currentUiState.last_pause_min_seconds : 0.04;
+        if (currentUiState.last_pause_min_seconds === undefined) currentUiState.last_pause_min_seconds = pauseMinSeconds;
+        if (autoPausesToggle) autoPausesToggle.checked = autoPausesEnabled;
+        if (autoPauseStyleSelect) autoPauseStyleSelect.value = currentUiState.last_pause_style || 'audiobook';
+        if (pauseStrengthSlider) pauseStrengthSlider.value = currentUiState.last_pause_strength !== undefined ? currentUiState.last_pause_strength : 1.0;
+        if (pauseStrengthValue) pauseStrengthValue.textContent = pauseStrengthSlider ? pauseStrengthSlider.value : '1.0';
+        if (pauseMaxSecondsInput) pauseMaxSecondsInput.value = currentUiState.last_pause_max_seconds !== undefined ? currentUiState.last_pause_max_seconds : 1.8;
+        if (pauseTopupOnlyCheckbox) pauseTopupOnlyCheckbox.checked = currentUiState.last_pause_topup_only !== undefined ? currentUiState.last_pause_topup_only : true;
+        toggleAutoPauseControls();
+
         if (hideChunkWarningCheckbox) hideChunkWarningCheckbox.checked = hideChunkWarning;
         if (hideGenerationWarningCheckbox) hideGenerationWarningCheckbox.checked = hideGenerationWarning;
 
@@ -676,6 +708,14 @@ document.addEventListener('DOMContentLoaded', async function () {
         });
         if (languageSelect) languageSelect.addEventListener('change', debouncedSaveState);
         if (outputFormatSelect) outputFormatSelect.addEventListener('change', debouncedSaveState);
+        if (autoPausesToggle) autoPausesToggle.addEventListener('change', () => { toggleAutoPauseControls(); debouncedSaveState(); });
+        if (autoPauseStyleSelect) autoPauseStyleSelect.addEventListener('change', debouncedSaveState);
+        if (pauseStrengthSlider) {
+            pauseStrengthSlider.addEventListener('input', () => { if (pauseStrengthValue) pauseStrengthValue.textContent = pauseStrengthSlider.value; });
+            pauseStrengthSlider.addEventListener('change', debouncedSaveState);
+        }
+        if (pauseMaxSecondsInput) pauseMaxSecondsInput.addEventListener('change', debouncedSaveState);
+        if (pauseTopupOnlyCheckbox) pauseTopupOnlyCheckbox.addEventListener('change', debouncedSaveState);
 
         // NEW: Model management listeners
         if (modelSelect) {
@@ -1010,6 +1050,15 @@ document.addEventListener('DOMContentLoaded', async function () {
             jsonData.smart_max_seconds = parseFloat(smartMaxInput.value);
             jsonData.smart_base_wps = parseFloat(smartBaseWpsInput.value);
             jsonData.smart_overlap_sentences = parseInt(smartOverlapInput.value, 10) || 0;
+        }
+        const autoPauseEnabled = autoPausesToggle ? autoPausesToggle.checked : false;
+        jsonData.auto_pauses = autoPauseEnabled;
+        if (autoPauseEnabled) {
+            jsonData.pause_style = autoPauseStyleSelect ? autoPauseStyleSelect.value : 'audiobook';
+            jsonData.pause_strength = pauseStrengthSlider ? parseFloat(pauseStrengthSlider.value) : 1.0;
+            jsonData.pause_max_seconds = pauseMaxSecondsInput ? parseFloat(pauseMaxSecondsInput.value) : 1.8;
+            jsonData.pause_topup_only = pauseTopupOnlyCheckbox ? pauseTopupOnlyCheckbox.checked : true;
+            jsonData.pause_min_seconds = currentUiState.last_pause_min_seconds !== undefined ? currentUiState.last_pause_min_seconds : 0.04;
         }
         if (currentVoiceMode === 'predefined' && predefinedVoiceSelect.value !== 'none') {
             jsonData.predefined_voice_id = predefinedVoiceSelect.value;

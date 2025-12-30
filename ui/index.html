@@ -195,6 +195,46 @@
                             </p>
 
                             <div class="form-group">
+                                <div class="flex-row items-center gap-3">
+                                    <label for="auto-pauses-toggle" class="form-label mb-0">Auto Pauses</label>
+                                    <input type="checkbox" id="auto-pauses-toggle" class="form-checkbox">
+                                    <p class="form-hint mb-0">Insert synthetic pauses before TTS. Manual tags still take priority.</p>
+                                </div>
+                                <div id="auto-pause-style-row" class="flex-row items-center gap-2 mt-3 hidden">
+                                    <label for="auto-pause-style" class="form-label small">Style</label>
+                                    <select id="auto-pause-style" class="form-select short">
+                                        <option value="audiobook" selected>Audiobook</option>
+                                        <option value="youtube">YouTube Explainer</option>
+                                        <option value="ad">Ad VO</option>
+                                        <option value="dramatic">Dramatic</option>
+                                    </select>
+                                </div>
+                                <details id="auto-pause-advanced" class="rounded-md border border-slate-200 dark:border-slate-700 p-3 mt-3 hidden">
+                                    <summary class="font-medium cursor-pointer select-none">Advanced</summary>
+                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                                        <div class="form-group compact">
+                                            <label for="pause-strength" class="form-label small">Strength</label>
+                                            <input type="range" id="pause-strength" min="0.5" max="2.0" step="0.05" value="1.0" class="form-slider">
+                                            <span id="pause-strength-value" class="slider-value tabular-nums">1.0</span>
+                                            <p class="form-hint">Multiplier over the selected style preset.</p>
+                                        </div>
+                                        <div class="form-group compact">
+                                            <label for="pause-max-seconds" class="form-label small">Max pause (s)</label>
+                                            <input type="number" id="pause-max-seconds" class="form-input" min="0.2" max="3.0" step="0.05" value="1.8">
+                                            <p class="form-hint">Upper cap for auto pauses.</p>
+                                        </div>
+                                        <div class="form-group compact">
+                                            <label for="pause-topup-only" class="form-label small">Top-up only</label>
+                                            <div class="flex-row items-center gap-2">
+                                                <input type="checkbox" id="pause-topup-only" class="form-checkbox" checked>
+                                                <span class="form-hint mb-0">Keep pauses subtle to avoid double-pausing.</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
+
+                            <div class="form-group">
                                 <label class="form-label mb-2">Voice Mode:</label>
                                 <div class="voice-mode">
                                     <label class="voice-mode__option selected" data-mode="predefined">

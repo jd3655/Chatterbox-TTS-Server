@@ -101,6 +101,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "hide_chunk_warning": False,  # Flag to hide the chunking warning modal.
         "hide_generation_warning": False,  # Flag to hide the general generation quality notice modal.
         "theme": "dark",  # Default UI theme ('dark' or 'light').
+        "last_auto_pauses_enabled": False,  # Whether auto pauses toggle was enabled.
+        "last_pause_style": "audiobook",  # Last selected auto pause style.
+        "last_pause_strength": 1.0,  # Last used auto pause strength multiplier.
+        "last_pause_max_seconds": 1.8,  # Last used cap for auto pauses.
+        "last_pause_min_seconds": 0.04,  # Last used floor for auto pauses.
+        "last_pause_topup_only": True,  # Whether auto pauses were in top-up mode.
     },
     "ui": {  # General UI display settings.
         "title": "Chatterbox TTS Server",  # Title displayed in the web UI.

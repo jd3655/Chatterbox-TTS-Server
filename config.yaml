@@ -66,6 +66,12 @@ ui_state:
   hide_generation_warning: false
   theme: light
   last_preset_name: "\u26A1 Turbo: Escape Room Panic"
+  last_auto_pauses_enabled: false
+  last_pause_style: audiobook
+  last_pause_strength: 1.0
+  last_pause_max_seconds: 1.8
+  last_pause_min_seconds: 0.04
+  last_pause_topup_only: true
 ui:
   title: Chatterbox TTS Server
   show_language_select: true

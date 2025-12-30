@@ -67,6 +67,7 @@ from models import (  # Pydantic models
     UpdateStatusResponse,
 )
 import utils  # Utility functions
+import auto_pauses  # Auto pause insertion
 
 from pydantic import BaseModel, Field
 
@@ -78,6 +79,34 @@ class OpenAISpeechRequest(BaseModel):
     response_format: Literal["wav", "opus", "mp3"] = "wav"  # Add "mp3"
     speed: float = 1.0
     seed: Optional[int] = None
+    auto_pauses: Optional[bool] = Field(
+        False, description="Enable intelligent auto pause insertion before synthesis."
+    )
+    pause_style: Optional[Literal["audiobook", "youtube", "ad", "dramatic"]] = Field(
+        None, description="Auto pause style preset when auto_pauses is true."
+    )
+    pause_strength: Optional[float] = Field(
+        1.0,
+        ge=0.5,
+        le=2.0,
+        description="Multiplier applied to computed auto pauses (0.5-2.0).",
+    )
+    pause_max_seconds: Optional[float] = Field(
+        1.8,
+        ge=0.2,
+        le=3.0,
+        description="Maximum cap for auto pauses in seconds (0.2-3.0).",
+    )
+    pause_min_seconds: Optional[float] = Field(
+        0.04,
+        ge=0.0,
+        le=0.2,
+        description="Minimum floor for auto pauses in seconds (0.0-0.2).",
+    )
+    pause_topup_only: Optional[bool] = Field(
+        True,
+        description="If true, keeps auto pauses conservative to avoid over-pausing.",
+    )
 
 
 # --- Logging Configuration ---
@@ -347,6 +376,10 @@ def _create_silence_tensor(duration_seconds: float, sample_rate: int) -> torch.T
     if samples == 0:
         return torch.zeros(0, dtype=torch.float32)
     return torch.zeros(samples, dtype=torch.float32)
+
+
+def _clamp_value(value: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(max_value, value))
 
 
 def _synthesize_with_pause_support(
@@ -915,6 +948,46 @@ async def custom_tts_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    processed_input_text = normalized_input_text
+
+    if request.auto_pauses:
+        pause_style = request.pause_style or "audiobook"
+        pause_strength = _clamp_value(
+            request.pause_strength if request.pause_strength is not None else 1.0,
+            0.5,
+            2.0,
+        )
+        pause_max = _clamp_value(
+            request.pause_max_seconds if request.pause_max_seconds is not None else 1.8,
+            0.2,
+            3.0,
+        )
+        pause_min = _clamp_value(
+            request.pause_min_seconds if request.pause_min_seconds is not None else 0.04,
+            0.0,
+            0.2,
+        )
+        if pause_min > pause_max:
+            pause_min = pause_max
+        pause_topup_only = (
+            request.pause_topup_only if request.pause_topup_only is not None else True
+        )
+        speed_factor_for_pauses = (
+            request.speed_factor
+            if request.speed_factor is not None
+            else get_gen_default_speed_factor()
+        )
+
+        processed_input_text = auto_pauses.insert_auto_pauses(
+            normalized_input_text,
+            pause_style,
+            speed_factor=speed_factor_for_pauses,
+            strength=pause_strength,
+            topup_only=pause_topup_only,
+            min_pause=pause_min,
+            max_pause=pause_max,
+        )
+
     audio_prompt_path_for_engine: Optional[Path] = None
     if request.voice_mode == "predefined":
         if not request.predefined_voice_id:
@@ -975,7 +1048,7 @@ async def custom_tts_endpoint(
     )
 
     if not request.split_text or effective_split_strategy == "off":
-        text_chunks = [normalized_input_text]
+        text_chunks = [processed_input_text]
         logger.info("Processing text as a single chunk (splitting disabled).")
     elif effective_split_strategy == "intelligent":
         speed_factor = (
@@ -984,7 +1057,7 @@ async def custom_tts_endpoint(
             else get_gen_default_speed_factor()
         )
         text_chunks = utils.smart_split_text(
-            normalized_input_text,
+            processed_input_text,
             target_seconds=(
                 request.smart_target_seconds
                 if request.smart_target_seconds is not None
@@ -1007,7 +1080,7 @@ async def custom_tts_endpoint(
             ),
         )
         perf_monitor.record(f"Text smart-split into {len(text_chunks)} chunks")
-    elif len(normalized_input_text) > (
+    elif len(processed_input_text) > (
         request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5
     ):
         chunk_size_to_use = (
@@ -1015,11 +1088,11 @@ async def custom_tts_endpoint(
         )
         logger.info(f"Splitting text into chunks of size ~{chunk_size_to_use}.")
         text_chunks = utils.chunk_text_by_sentences(
-            normalized_input_text, chunk_size_to_use
+            processed_input_text, chunk_size_to_use
         )
         perf_monitor.record(f"Text split into {len(text_chunks)} chunks")
     else:
-        text_chunks = [normalized_input_text]
+        text_chunks = [processed_input_text]
         logger.info(
             "Processing text as a single chunk (splitting not enabled or text too short)."
         )
@@ -1361,6 +1434,46 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+        processed_text = normalized_text
+        if request.auto_pauses:
+            pause_style = request.pause_style or "audiobook"
+            pause_strength = _clamp_value(
+                request.pause_strength if request.pause_strength is not None else 1.0,
+                0.5,
+                2.0,
+            )
+            pause_max = _clamp_value(
+                request.pause_max_seconds
+                if request.pause_max_seconds is not None
+                else 1.8,
+                0.2,
+                3.0,
+            )
+            pause_min = _clamp_value(
+                request.pause_min_seconds
+                if request.pause_min_seconds is not None
+                else 0.04,
+                0.0,
+                0.2,
+            )
+            if pause_min > pause_max:
+                pause_min = pause_max
+            pause_topup_only = (
+                request.pause_topup_only
+                if request.pause_topup_only is not None
+                else True
+            )
+
+            processed_text = auto_pauses.insert_auto_pauses(
+                normalized_text,
+                pause_style,
+                speed_factor=request.speed,
+                strength=pause_strength,
+                topup_only=pause_topup_only,
+                min_pause=pause_min,
+                max_pause=pause_max,
+            )
+
         # Use the provided seed or the default
         seed_to_use = (
             request.seed if request.seed is not None else get_gen_default_seed()
@@ -1368,7 +1481,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
 
         # Synthesize the audio with pause support
         audio_tensor, sr = _synthesize_with_pause_support(
-            normalized_text,
+            processed_text,
             audio_prompt_path=str(audio_prompt_path),
             temperature=get_gen_default_temperature(),
             exaggeration=get_gen_default_exaggeration(),
