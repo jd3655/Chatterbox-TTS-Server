@@ -153,6 +153,24 @@ class CustomTTSRequest(BaseModel):
         description="If true, keeps auto pauses conservative to avoid over-pausing.",
     )
 
+    pronunciation_dict: Optional[dict] = Field(
+        None,
+        description="Per-request pronunciation dictionary to enforce whole-word replacements.",
+    )
+    pronunciation_dict_mode: Optional[Literal["merge", "replace"]] = Field(
+        "merge",
+        description="How to combine request dictionary with the configured dictionary.",
+    )
+
+    pronunciation_dict: Optional[dict] = Field(
+        None,
+        description="Per-request pronunciation dictionary to enforce whole-word replacements.",
+    )
+    pronunciation_dict_mode: Optional[Literal["merge", "replace"]] = Field(
+        "merge",
+        description="How to combine request dictionary with the configured dictionary.",
+    )
+
 
 class ErrorResponse(BaseModel):
     """Standard error response model for API errors."""

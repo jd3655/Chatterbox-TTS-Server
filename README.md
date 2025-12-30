@@ -87,6 +87,7 @@ The server expects plain text input for synthesis and we solve the complexity of
     *   **Auto Pauses** (Audiobook / YouTube Explainer / Ad VO / Dramatic) intelligently insert `[pause:Xs]` before TTS; "Top-up only" is ON by default to keep pauses subtle and avoid over-pausing.
 *   **Predefined Voices:** Select from curated, ready-to-use synthetic voices for consistent and reliable output without cloning setup.
 *   **Voice Cloning:** Generate speech using a voice similar to an uploaded reference audio file.
+*   **Pronunciation Dictionary:** Define whole-word, case-sensitive replacements (e.g., `Zilog → ZY-log`, `FPGA → F P G A`) that run **before** pause normalization, auto-pauses, and splitting. Configure globally in `config.yaml` or through the Web UI's Pronunciation Dictionary section, and optionally provide per-request overrides via `pronunciation_dict` / `pronunciation_dict_mode` on the API.
 *   **Consistent Generation:** Achieve consistent voice output across multiple generations or text chunks by using the "Predefined Voices" or "Voice Cloning" modes, optionally combined with a fixed integer **Seed**.
 *   **Docker support** for easy, reproducible containerized deployment on any platform.
 

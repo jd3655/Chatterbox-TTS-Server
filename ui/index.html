@@ -325,6 +325,38 @@
 
                             <details class="collapsible" open>
                                 <summary class="collapsible__trigger">
+                                    <span>Pronunciation Dictionary</span>
+                                    <svg class="collapsible__icon" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd"
+                                            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                            clip-rule="evenodd" />
+                                    </svg>
+                                </summary>
+                                <div class="collapsible__content">
+                                    <p class="form-hint mb-3">
+                                        Whole-word, case-sensitive replacements applied before pauses and splitting.
+                                        Examples: <code class="code">Zilog → ZY-log</code>,
+                                        <code class="code">FPGA → F P G A</code>,
+                                        <code class="code">SaaS → sass</code>.
+                                    </p>
+                                    <div class="pronunciation-table">
+                                        <div class="pronunciation-table__row pronunciation-table__row--header">
+                                            <span>Word (exact match)</span>
+                                            <span>Replacement</span>
+                                            <span class="sr-only">Actions</span>
+                                        </div>
+                                        <div id="pronunciation-table-body"></div>
+                                    </div>
+                                    <div class="flex-row gap-3 mt-3">
+                                        <button type="button" id="pronunciation-add-row" class="btn ghost">Add Row</button>
+                                        <button type="button" id="pronunciation-save-btn" class="btn">Save Dictionary</button>
+                                        <span id="pronunciation-status" class="form-hint hidden"></span>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="collapsible" open>
+                                <summary class="collapsible__trigger">
                                     <span>Generation Parameters</span>
                                     <svg class="collapsible__icon" viewBox="0 0 20 20" fill="currentColor">
                                         <path fill-rule="evenodd"

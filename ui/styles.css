@@ -1772,6 +1772,52 @@ a.btn.disabled {
     }
 }
 
+.pronunciation-table {
+    border: 1px solid var(--surface-200);
+    border-radius: 8px;
+    background: var(--surface-100);
+    overflow: hidden;
+}
+
+.pronunciation-table__row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    align-items: center;
+    border-bottom: 1px solid var(--surface-200);
+}
+
+.pronunciation-table__row--header {
+    background: var(--surface-150);
+    font-weight: 600;
+}
+
+.pronunciation-table__input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--surface-300);
+    background: var(--surface-50);
+    color: var(--text-primary);
+}
+
+.pronunciation-table__remove {
+    color: var(--text-muted);
+}
+
+.pronunciation-table__remove:hover {
+    color: var(--danger-500);
+}
+
+.text-success {
+    color: var(--success-500);
+}
+
+.text-error {
+    color: var(--danger-500);
+}
+
 /* ============================================
      25. Responsive Breakpoints
      ============================================ */

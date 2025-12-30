@@ -107,12 +107,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "last_pause_max_seconds": 1.8,  # Last used cap for auto pauses.
         "last_pause_min_seconds": 0.04,  # Last used floor for auto pauses.
         "last_pause_topup_only": True,  # Whether auto pauses were in top-up mode.
+        "last_pronunciation_dict": {},  # Last pronunciation dictionary rows edited in UI.
     },
     "ui": {  # General UI display settings.
         "title": "Chatterbox TTS Server",  # Title displayed in the web UI.
         "show_language_select": True,  # Whether to show language selection in the UI.
         "max_predefined_voices_in_dropdown": 20,  # Max predefined voices to list in UI dropdown.
     },
+    "pronunciation_dict": {},  # Global pronunciation dictionary.
     "debug": {  # Settings for debugging purposes
         "save_intermediate_audio": False  # If true, save intermediate audio files for debugging
     },
@@ -907,6 +909,22 @@ def get_full_config_for_template() -> Dict[str, Any]:
     config_snapshot = config_manager.get_all()  # Gets a deep copy.
     # Convert Path objects in this snapshot to strings for serialization.
     return config_manager._prepare_config_for_saving(config_snapshot)
+
+
+def get_pronunciation_dict() -> Dict[str, str]:
+    """Returns the global pronunciation dictionary from config."""
+    raw = config_manager.get("pronunciation_dict", {})
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def get_pronunciation_dict() -> Dict[str, str]:
+    """Returns the global pronunciation dictionary from config."""
+    raw = config_manager.get("pronunciation_dict", {})
+    if isinstance(raw, dict):
+        return raw
+    return {}
 
 
 # --- End File: config.py ---
