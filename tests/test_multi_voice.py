@@ -271,3 +271,53 @@ def test_multi_voice_concatenation(monkeypatch):
     assert encoded["length"] == 4 + int(0.25 * 24000) + 4
     assert calls[0][0] == "clay.wav"
     assert calls[1][0] == "emily.wav"
+
+
+def test_directives_accept_extensionless_case_insensitive(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(server, "engine", type("E", (), {"MODEL_LOADED": True}))
+    monkeypatch.setattr(server, "get_audio_sample_rate", lambda: 24000)
+    monkeypatch.setattr(server.config_manager, "get_bool", lambda *args, **kwargs: False)
+
+    def fake_predefined_voices():
+        return [
+            {"filename": "Clay.wav", "display_name": "Clay"},
+            {"filename": "Emily.wav", "display_name": "Emily"},
+        ]
+
+    monkeypatch.setattr(server.utils, "get_predefined_voices", fake_predefined_voices)
+    monkeypatch.setattr(server, "_resolve_predefined_voice_path", lambda vid: Path(vid))
+    monkeypatch.setattr(server, "_prepare_text_for_request", lambda text, req: text)
+
+    class FakeArray(list):
+        def astype(self, *args, **kwargs):
+            return self
+
+    def fake_synthesize_processed_text(processed_text, req, audio_prompt_path_for_engine=None, perf_monitor=None):
+        calls.append(req.predefined_voice_id)
+        return FakeArray(np.full(2, 1.0, dtype=np.float32)), 24000
+
+    monkeypatch.setattr(server, "_synthesize_processed_text", fake_synthesize_processed_text)
+    monkeypatch.setattr(server.utils, "encode_audio", lambda *a, **k: b"x" * 200)
+
+    request = CustomTTSRequest(
+        text="<voice:clay>\nHello\n<voice:EMILY>\nHi",
+        voice_mode="predefined",
+        predefined_voice_id="clay",
+        output_format="wav",
+        multi_voice=True,
+        multi_voice_mode="directives",
+    )
+
+    import asyncio
+
+    response = asyncio.get_event_loop().run_until_complete(
+        server.custom_tts_endpoint(request, BackgroundTasks())
+    )
+    async def _collect():
+        return b"".join([chunk async for chunk in response.body_iterator])
+
+    _ = asyncio.get_event_loop().run_until_complete(_collect())
+    assert calls[0] == "Clay.wav"
+    assert calls[1] == "Emily.wav"

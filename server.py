@@ -520,6 +520,37 @@ def _resolve_predefined_voice_path(voice_id: str) -> Path:
     return potential_path
 
 
+def _resolve_requested_voice_id(raw_voice_id: Optional[str], available_voices: set[str]) -> Optional[str]:
+    """Map a user-provided voice identifier to a known predefined voice filename.
+
+    Accepts identifiers without extensions (e.g., "clay" -> "Clay.wav") and performs
+    case-insensitive matching on both full filenames and stems. Returns ``None`` if no
+    match is found.
+    """
+
+    if not raw_voice_id:
+        return None
+
+    candidate = raw_voice_id.strip()
+    if candidate in available_voices:
+        return candidate
+
+    lower_map = {v.lower(): v for v in available_voices}
+    if candidate.lower() in lower_map:
+        return lower_map[candidate.lower()]
+
+    stem_map: Dict[str, str] = {}
+    for voice in available_voices:
+        stem = Path(voice).stem.lower()
+        stem_map.setdefault(stem, voice)
+
+    candidate_stem = Path(candidate).stem.lower()
+    if candidate_stem in stem_map:
+        return stem_map[candidate_stem]
+
+    return None
+
+
 def _prepare_text_for_request(
     raw_text: str, request: CustomTTSRequest
 ) -> str:
@@ -1403,49 +1434,72 @@ async def custom_tts_endpoint(
                 status_code=400,
                 detail="No predefined voices available for multi-voice synthesis.",
             )
-        default_voice = (
-            request.multi_voice_default_voice
-            or request.predefined_voice_id
-            or get_default_voice_id()
-        )
+        default_candidates = [
+            request.multi_voice_default_voice,
+            request.predefined_voice_id,
+            get_default_voice_id(),
+        ]
+        default_voice = None
+        for candidate in default_candidates:
+            resolved = _resolve_requested_voice_id(candidate, all_available_voices)
+            if resolved:
+                default_voice = resolved
+                break
         if not default_voice:
             default_voice = next(iter(all_available_voices))
-        if default_voice not in all_available_voices:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Default voice '{default_voice}' is not available. Allowed voices: {sorted(all_available_voices)}",
-            )
 
         segments: List[Dict[str, str]] = []
         mode = request.multi_voice_mode or "paragraphs"
+        unknown_voices: set[str] = set()
 
         if request.multi_voice_segments:
             for seg in request.multi_voice_segments:
                 if not seg.get("text", "").strip():
                     continue
-                voice_id = seg.get("voice_id") or default_voice
-                segments.append({"voice_id": voice_id, "text": seg.get("text", "")})
+                voice_id_raw = seg.get("voice_id") or default_voice
+                resolved_voice = _resolve_requested_voice_id(
+                    voice_id_raw, all_available_voices
+                ) or default_voice
+                if not resolved_voice:
+                    unknown_voices.add(voice_id_raw or "None")
+                    continue
+                segments.append(
+                    {"voice_id": resolved_voice, "text": seg.get("text", "")}
+                )
         elif mode == "directives":
             parsed_segments = multi_voice.parse_voice_directives(request.text)
             for seg in parsed_segments:
-                voice_id = seg.get("voice_id") or default_voice
-                segments.append({"voice_id": voice_id, "text": seg.get("text", "")})
+                voice_id_raw = seg.get("voice_id") or default_voice
+                resolved_voice = _resolve_requested_voice_id(
+                    voice_id_raw, all_available_voices
+                ) or default_voice
+                if not resolved_voice:
+                    unknown_voices.add(voice_id_raw or "None")
+                    continue
+                segments.append(
+                    {"voice_id": resolved_voice, "text": seg.get("text", "")}
+                )
         else:
             paragraphs = multi_voice.split_paragraphs(request.text)
             assignments = request.multi_voice_assignments or []
-            segments = multi_voice.build_segments_from_paragraphs(
+            for seg in multi_voice.build_segments_from_paragraphs(
                 paragraphs, assignments, default_voice
-            )
+            ):
+                resolved_voice = _resolve_requested_voice_id(
+                    seg["voice_id"], all_available_voices
+                )
+                if not resolved_voice:
+                    unknown_voices.add(seg["voice_id"] or "None")
+                    continue
+                segments.append({"voice_id": resolved_voice, "text": seg["text"]})
 
         if not segments:
             segments = [{"voice_id": default_voice, "text": request.text}]
 
-        unique_voices = {seg["voice_id"] for seg in segments}
-        unknown = sorted(unique_voices - all_available_voices)
-        if unknown:
+        if unknown_voices:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown voice IDs: {unknown}. Allowed voices: {sorted(all_available_voices)}",
+                detail=f"Unknown voice IDs: {sorted(unknown_voices)}. Allowed voices: {sorted(all_available_voices)}",
             )
 
         segment_audios: List[np.ndarray] = []
