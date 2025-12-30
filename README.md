@@ -135,6 +135,7 @@ Generate a single audio file that mixes different speakers in one run. Enable **
    ```
 
    Anything before the first directive uses the default voice. Directives inside bracket tokens like `[pause:0.3s]` are ignored to keep existing tags intact.
+   Voice names are matched case-insensitively, and you can omit the file extension (e.g., `<voice:clay>` maps to `Clay.wav`).
 
 Behind the scenes, the server reuses the normal preprocessing (pronunciation dictionaries, pause normalization, auto pauses, intelligent splitting), renders each segment with the selected predefined voice, and stitches the results into one output. Optional silence between segments (default 0.25s) keeps speaker changes natural. If segments return different sample rates, they are resampled to the server’s standard rate before concatenation.
     *   Provides reliable voice output without manual cloning setup.
