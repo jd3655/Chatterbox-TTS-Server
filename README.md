@@ -86,7 +86,6 @@ The server expects plain text input for synthesis and we solve the complexity of
     *   Manual shorthand like `Hello[1s]Bob[0.2s]Smith` is normalized to canonical pause tags with safety clamping before synthesis.
     *   **Auto Pauses** (Audiobook / YouTube Explainer / Ad VO / Dramatic) intelligently insert `[pause:Xs]` before TTS; "Top-up only" is ON by default to keep pauses subtle and avoid over-pausing.
 *   **Predefined Voices:** Select from curated, ready-to-use synthetic voices for consistent and reliable output without cloning setup.
-*   **Multi-Voice Synthesis:** Combine multiple speakers in a single run by assigning voices per paragraph or using inline `<voice:...>` directives. The server stitches the rendered segments into one WAV/MP3 and can insert configurable pauses between speakers.
 *   **Voice Cloning:** Generate speech using a voice similar to an uploaded reference audio file.
 *   **Pronunciation Dictionary:** Define whole-word, case-sensitive replacements (e.g., `Zilog → ZY-log`, `FPGA → F P G A`) that run **before** pause normalization, auto-pauses, and splitting. Configure globally in `config.yaml` or through the Web UI's Pronunciation Dictionary section, and optionally provide per-request overrides via `pronunciation_dict` / `pronunciation_dict_mode` on the API.
 *   **Consistent Generation:** Achieve consistent voice output across multiple generations or text chunks by using the "Predefined Voices" or "Voice Cloning" modes, optionally combined with a fixed integer **Seed**.
@@ -119,24 +118,6 @@ This server application enhances the underlying `chatterbox-tts` engine with the
 *   **Predefined Voices:**
     *   Allows usage of curated, ready-to-use synthetic voices stored in the `./voices` directory.
     *   Selectable via UI dropdown ("Predefined Voices" mode).
-
-## 🎙️ Multi-Voice Synthesis
-
-Generate a single audio file that mixes different speakers in one run. Enable **Multi-Voice** in the Web UI (or via the `/tts` API) and choose one of two modes:
-
-1. **By Paragraph (UI-friendly):** Split on blank lines, then assign a voice per paragraph using dropdowns. If you provide fewer assignments than paragraphs, the remaining paragraphs use the default voice. A quick “Alternate A/B” button populates alternating voices.
-2. **Inline Directives (advanced / API-friendly):** Embed directives directly in your text:
-
-   ```text
-   <voice:clay>
-   Hello from Clay.
-   <voice:emily>
-   And Emily replies.
-   ```
-
-   Anything before the first directive uses the default voice. Directives inside bracket tokens like `[pause:0.3s]` are ignored to keep existing tags intact.
-
-Behind the scenes, the server reuses the normal preprocessing (pronunciation dictionaries, pause normalization, auto pauses, intelligent splitting), renders each segment with the selected predefined voice, and stitches the results into one output. Optional silence between segments (default 0.25s) keeps speaker changes natural. If segments return different sample rates, they are resampled to the server’s standard rate before concatenation.
     *   Provides reliable voice output without manual cloning setup.
 *   **Voice Cloning:**
     *   Supports voice cloning using a reference audio file (`.wav` or `.mp3`).
