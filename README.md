@@ -82,6 +82,9 @@ The server expects plain text input for synthesis and we solve the complexity of
 *   **Multi-Platform Acceleration:** Full support for **NVIDIA (CUDA)**, **AMD (ROCm)**, and **Apple Silicon (MPS)** GPUs, with an automatic fallback to **CPU**, ensuring you can run on any hardware.
 *   **Large Text Handling:** Split strategies (Off/Basic/Intelligent) to process long inputs safely, targeting sentence or word-aware boundaries for consistent audio stitching.
 *   **📚 Audiobook Generation:** Perfect for creating complete audiobooks - simply paste an entire book's text and the server automatically processes it into a single, seamless audio file with consistent voice quality throughout.
+*   **Pause control (manual + auto):**
+    *   Manual shorthand like `Hello[1s]Bob[0.2s]Smith` is normalized to canonical pause tags with safety clamping before synthesis.
+    *   **Auto Pauses** (Audiobook / YouTube Explainer / Ad VO / Dramatic) intelligently insert `[pause:Xs]` before TTS; "Top-up only" is ON by default to keep pauses subtle and avoid over-pausing.
 *   **Predefined Voices:** Select from curated, ready-to-use synthetic voices for consistent and reliable output without cloning setup.
 *   **Voice Cloning:** Generate speech using a voice similar to an uploaded reference audio file.
 *   **Consistent Generation:** Achieve consistent voice output across multiple generations or text chunks by using the "Predefined Voices" or "Voice Cloning" modes, optionally combined with a fixed integer **Seed**.

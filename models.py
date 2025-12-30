@@ -122,6 +122,36 @@ class CustomTTSRequest(BaseModel):
     language: Optional[str] = Field(
         None, description="Overrides default language if provided."
     )
+    auto_pauses: Optional[bool] = Field(
+        False,
+        description="Enable intelligent auto pause insertion before synthesis.",
+    )
+    pause_style: Optional[Literal["audiobook", "youtube", "ad", "dramatic"]] = Field(
+        None,
+        description="Auto pause style preset to use when auto_pauses is true.",
+    )
+    pause_strength: Optional[float] = Field(
+        1.0,
+        ge=0.5,
+        le=2.0,
+        description="Multiplier applied to computed auto pauses (0.5-2.0).",
+    )
+    pause_max_seconds: Optional[float] = Field(
+        1.8,
+        ge=0.2,
+        le=3.0,
+        description="Maximum cap for auto pauses in seconds (0.2-3.0).",
+    )
+    pause_min_seconds: Optional[float] = Field(
+        0.04,
+        ge=0.0,
+        le=0.2,
+        description="Minimum floor for auto pauses in seconds (0.0-0.2).",
+    )
+    pause_topup_only: Optional[bool] = Field(
+        True,
+        description="If true, keeps auto pauses conservative to avoid over-pausing.",
+    )
 
 
 class ErrorResponse(BaseModel):
